@@ -1,0 +1,519 @@
+{
+  "at": "2026-10-17T04:32:51.071Z",
+  "weeks": 500,
+  "mode": "local",
+  "best": {
+    "elevated": 30,
+    "high": 50,
+    "catchRate": 0.905852417302799,
+    "escalationRate": 0.6870229007633588,
+    "sponsorPingsPerWeek": 0.222,
+    "extraCheckinsPerWeek": 1.092
+  },
+  "rows": [
+    {
+      "elevated": 20,
+      "high": 35,
+      "catchRate": 0.9720101781170484,
+      "escalationRate": 0.8804071246819338,
+      "sponsorPingsPerWeek": 0.676,
+      "extraCheckinsPerWeek": 2.726
+    },
+    {
+      "elevated": 20,
+      "high": 40,
+      "catchRate": 0.9720101781170484,
+      "escalationRate": 0.8040712468193384,
+      "sponsorPingsPerWeek": 0.508,
+      "extraCheckinsPerWeek": 2.726
+    },
+    {
+      "elevated": 20,
+      "high": 45,
+      "catchRate": 0.9720101781170484,
+      "escalationRate": 0.7582697201017812,
+      "sponsorPingsPerWeek": 0.304,
+      "extraCheckinsPerWeek": 2.726
+    },
+    {
+      "elevated": 20,
+      "high": 50,
+      "catchRate": 0.9720101781170484,
+      "escalationRate": 0.6870229007633588,
+      "sponsorPingsPerWeek": 0.222,
+      "extraCheckinsPerWeek": 2.726
+    },
+    {
+      "elevated": 20,
+      "high": 55,
+      "catchRate": 0.9720101781170484,
+      "escalationRate": 0.6259541984732825,
+      "sponsorPingsPerWeek": 0.142,
+      "extraCheckinsPerWeek": 2.726
+    },
+    {
+      "elevated": 20,
+      "high": 60,
+      "catchRate": 0.9720101781170484,
+      "escalationRate": 0.544529262086514,
+      "sponsorPingsPerWeek": 0.072,
+      "extraCheckinsPerWeek": 2.726
+    },
+    {
+      "elevated": 20,
+      "high": 65,
+      "catchRate": 0.9720101781170484,
+      "escalationRate": 0.49872773536895676,
+      "sponsorPingsPerWeek": 0.038,
+      "extraCheckinsPerWeek": 2.726
+    },
+    {
+      "elevated": 20,
+      "high": 70,
+      "catchRate": 0.9720101781170484,
+      "escalationRate": 0.43765903307888043,
+      "sponsorPingsPerWeek": 0.024,
+      "extraCheckinsPerWeek": 2.726
+    },
+    {
+      "elevated": 20,
+      "high": 75,
+      "catchRate": 0.9720101781170484,
+      "escalationRate": 0.33587786259541985,
+      "sponsorPingsPerWeek": 0.016,
+      "extraCheckinsPerWeek": 2.726
+    },
+    {
+      "elevated": 20,
+      "high": 80,
+      "catchRate": 0.9720101781170484,
+      "escalationRate": 0.27989821882951654,
+      "sponsorPingsPerWeek": 0.01,
+      "extraCheckinsPerWeek": 2.726
+    },
+    {
+      "elevated": 20,
+      "high": 85,
+      "catchRate": 0.9720101781170484,
+      "escalationRate": 0.22391857506361323,
+      "sponsorPingsPerWeek": 0.002,
+      "extraCheckinsPerWeek": 2.726
+    },
+    {
+      "elevated": 20,
+      "high": 90,
+      "catchRate": 0.9720101781170484,
+      "escalationRate": 0.19083969465648856,
+      "sponsorPingsPerWeek": 0,
+      "extraCheckinsPerWeek": 2.726
+    },
+    {
+      "elevated": 25,
+      "high": 40,
+      "catchRate": 0.9516539440203562,
+      "escalationRate": 0.8040712468193384,
+      "sponsorPingsPerWeek": 0.508,
+      "extraCheckinsPerWeek": 1.824
+    },
+    {
+      "elevated": 25,
+      "high": 45,
+      "catchRate": 0.9516539440203562,
+      "escalationRate": 0.7582697201017812,
+      "sponsorPingsPerWeek": 0.304,
+      "extraCheckinsPerWeek": 1.824
+    },
+    {
+      "elevated": 25,
+      "high": 50,
+      "catchRate": 0.9516539440203562,
+      "escalationRate": 0.6870229007633588,
+      "sponsorPingsPerWeek": 0.222,
+      "extraCheckinsPerWeek": 1.824
+    },
+    {
+      "elevated": 25,
+      "high": 55,
+      "catchRate": 0.9516539440203562,
+      "escalationRate": 0.6259541984732825,
+      "sponsorPingsPerWeek": 0.142,
+      "extraCheckinsPerWeek": 1.824
+    },
+    {
+      "elevated": 25,
+      "high": 60,
+      "catchRate": 0.9516539440203562,
+      "escalationRate": 0.544529262086514,
+      "sponsorPingsPerWeek": 0.072,
+      "extraCheckinsPerWeek": 1.824
+    },
+    {
+      "elevated": 25,
+      "high": 65,
+      "catchRate": 0.9516539440203562,
+      "escalationRate": 0.49872773536895676,
+      "sponsorPingsPerWeek": 0.038,
+      "extraCheckinsPerWeek": 1.824
+    },
+    {
+      "elevated": 25,
+      "high": 70,
+      "catchRate": 0.9516539440203562,
+      "escalationRate": 0.43765903307888043,
+      "sponsorPingsPerWeek": 0.024,
+      "extraCheckinsPerWeek": 1.824
+    },
+    {
+      "elevated": 25,
+      "high": 75,
+      "catchRate": 0.9516539440203562,
+      "escalationRate": 0.33587786259541985,
+      "sponsorPingsPerWeek": 0.016,
+      "extraCheckinsPerWeek": 1.824
+    },
+    {
+      "elevated": 25,
+      "high": 80,
+      "catchRate": 0.9516539440203562,
+      "escalationRate": 0.27989821882951654,
+      "sponsorPingsPerWeek": 0.01,
+      "extraCheckinsPerWeek": 1.824
+    },
+    {
+      "elevated": 25,
+      "high": 85,
+      "catchRate": 0.9516539440203562,
+      "escalationRate": 0.22391857506361323,
+      "sponsorPingsPerWeek": 0.002,
+      "extraCheckinsPerWeek": 1.824
+    },
+    {
+      "elevated": 25,
+      "high": 90,
+      "catchRate": 0.9516539440203562,
+      "escalationRate": 0.19083969465648856,
+      "sponsorPingsPerWeek": 0,
+      "extraCheckinsPerWeek": 1.824
+    },
+    {
+      "elevated": 30,
+      "high": 45,
+      "catchRate": 0.905852417302799,
+      "escalationRate": 0.7582697201017812,
+      "sponsorPingsPerWeek": 0.304,
+      "extraCheckinsPerWeek": 1.092
+    },
+    {
+      "elevated": 30,
+      "high": 50,
+      "catchRate": 0.905852417302799,
+      "escalationRate": 0.6870229007633588,
+      "sponsorPingsPerWeek": 0.222,
+      "extraCheckinsPerWeek": 1.092
+    },
+    {
+      "elevated": 30,
+      "high": 55,
+      "catchRate": 0.905852417302799,
+      "escalationRate": 0.6259541984732825,
+      "sponsorPingsPerWeek": 0.142,
+      "extraCheckinsPerWeek": 1.092
+    },
+    {
+      "elevated": 30,
+      "high": 60,
+      "catchRate": 0.905852417302799,
+      "escalationRate": 0.544529262086514,
+      "sponsorPingsPerWeek": 0.072,
+      "extraCheckinsPerWeek": 1.092
+    },
+    {
+      "elevated": 30,
+      "high": 65,
+      "catchRate": 0.905852417302799,
+      "escalationRate": 0.49872773536895676,
+      "sponsorPingsPerWeek": 0.038,
+      "extraCheckinsPerWeek": 1.092
+    },
+    {
+      "elevated": 30,
+      "high": 70,
+      "catchRate": 0.905852417302799,
+      "escalationRate": 0.43765903307888043,
+      "sponsorPingsPerWeek": 0.024,
+      "extraCheckinsPerWeek": 1.092
+    },
+    {
+      "elevated": 30,
+      "high": 75,
+      "catchRate": 0.905852417302799,
+      "escalationRate": 0.33587786259541985,
+      "sponsorPingsPerWeek": 0.016,
+      "extraCheckinsPerWeek": 1.092
+    },
+    {
+      "elevated": 30,
+      "high": 80,
+      "catchRate": 0.905852417302799,
+      "escalationRate": 0.27989821882951654,
+      "sponsorPingsPerWeek": 0.01,
+      "extraCheckinsPerWeek": 1.092
+    },
+    {
+      "elevated": 30,
+      "high": 85,
+      "catchRate": 0.905852417302799,
+      "escalationRate": 0.22391857506361323,
+      "sponsorPingsPerWeek": 0.002,
+      "extraCheckinsPerWeek": 1.092
+    },
+    {
+      "elevated": 30,
+      "high": 90,
+      "catchRate": 0.905852417302799,
+      "escalationRate": 0.19083969465648856,
+      "sponsorPingsPerWeek": 0,
+      "extraCheckinsPerWeek": 1.092
+    },
+    {
+      "elevated": 35,
+      "high": 50,
+      "catchRate": 0.8804071246819338,
+      "escalationRate": 0.6870229007633588,
+      "sponsorPingsPerWeek": 0.222,
+      "extraCheckinsPerWeek": 0.676
+    },
+    {
+      "elevated": 35,
+      "high": 55,
+      "catchRate": 0.8804071246819338,
+      "escalationRate": 0.6259541984732825,
+      "sponsorPingsPerWeek": 0.142,
+      "extraCheckinsPerWeek": 0.676
+    },
+    {
+      "elevated": 35,
+      "high": 60,
+      "catchRate": 0.8804071246819338,
+      "escalationRate": 0.544529262086514,
+      "sponsorPingsPerWeek": 0.072,
+      "extraCheckinsPerWeek": 0.676
+    },
+    {
+      "elevated": 35,
+      "high": 65,
+      "catchRate": 0.8804071246819338,
+      "escalationRate": 0.49872773536895676,
+      "sponsorPingsPerWeek": 0.038,
+      "extraCheckinsPerWeek": 0.676
+    },
+    {
+      "elevated": 35,
+      "high": 70,
+      "catchRate": 0.8804071246819338,
+      "escalationRate": 0.43765903307888043,
+      "sponsorPingsPerWeek": 0.024,
+      "extraCheckinsPerWeek": 0.676
+    },
+    {
+      "elevated": 35,
+      "high": 75,
+      "catchRate": 0.8804071246819338,
+      "escalationRate": 0.33587786259541985,
+      "sponsorPingsPerWeek": 0.016,
+      "extraCheckinsPerWeek": 0.676
+    },
+    {
+      "elevated": 35,
+      "high": 80,
+      "catchRate": 0.8804071246819338,
+      "escalationRate": 0.27989821882951654,
+      "sponsorPingsPerWeek": 0.01,
+      "extraCheckinsPerWeek": 0.676
+    },
+    {
+      "elevated": 35,
+      "high": 85,
+      "catchRate": 0.8804071246819338,
+      "escalationRate": 0.22391857506361323,
+      "sponsorPingsPerWeek": 0.002,
+      "extraCheckinsPerWeek": 0.676
+    },
+    {
+      "elevated": 35,
+      "high": 90,
+      "catchRate": 0.8804071246819338,
+      "escalationRate": 0.19083969465648856,
+      "sponsorPingsPerWeek": 0,
+      "extraCheckinsPerWeek": 0.676
+    },
+    {
+      "elevated": 40,
+      "high": 55,
+      "catchRate": 0.8040712468193384,
+      "escalationRate": 0.6259541984732825,
+      "sponsorPingsPerWeek": 0.142,
+      "extraCheckinsPerWeek": 0.508
+    },
+    {
+      "elevated": 40,
+      "high": 60,
+      "catchRate": 0.8040712468193384,
+      "escalationRate": 0.544529262086514,
+      "sponsorPingsPerWeek": 0.072,
+      "extraCheckinsPerWeek": 0.508
+    },
+    {
+      "elevated": 40,
+      "high": 65,
+      "catchRate": 0.8040712468193384,
+      "escalationRate": 0.49872773536895676,
+      "sponsorPingsPerWeek": 0.038,
+      "extraCheckinsPerWeek": 0.508
+    },
+    {
+      "elevated": 40,
+      "high": 70,
+      "catchRate": 0.8040712468193384,
+      "escalationRate": 0.43765903307888043,
+      "sponsorPingsPerWeek": 0.024,
+      "extraCheckinsPerWeek": 0.508
+    },
+    {
+      "elevated": 40,
+      "high": 75,
+      "catchRate": 0.8040712468193384,
+      "escalationRate": 0.33587786259541985,
+      "sponsorPingsPerWeek": 0.016,
+      "extraCheckinsPerWeek": 0.508
+    },
+    {
+      "elevated": 40,
+      "high": 80,
+      "catchRate": 0.8040712468193384,
+      "escalationRate": 0.27989821882951654,
+      "sponsorPingsPerWeek": 0.01,
+      "extraCheckinsPerWeek": 0.508
+    },
+    {
+      "elevated": 40,
+      "high": 85,
+      "catchRate": 0.8040712468193384,
+      "escalationRate": 0.22391857506361323,
+      "sponsorPingsPerWeek": 0.002,
+      "extraCheckinsPerWeek": 0.508
+    },
+    {
+      "elevated": 40,
+      "high": 90,
+      "catchRate": 0.8040712468193384,
+      "escalationRate": 0.19083969465648856,
+      "sponsorPingsPerWeek": 0,
+      "extraCheckinsPerWeek": 0.508
+    },
+    {
+      "elevated": 45,
+      "high": 60,
+      "catchRate": 0.7582697201017812,
+      "escalationRate": 0.544529262086514,
+      "sponsorPingsPerWeek": 0.072,
+      "extraCheckinsPerWeek": 0.304
+    },
+    {
+      "elevated": 45,
+      "high": 65,
+      "catchRate": 0.7582697201017812,
+      "escalationRate": 0.49872773536895676,
+      "sponsorPingsPerWeek": 0.038,
+      "extraCheckinsPerWeek": 0.304
+    },
+    {
+      "elevated": 45,
+      "high": 70,
+      "catchRate": 0.7582697201017812,
+      "escalationRate": 0.43765903307888043,
+      "sponsorPingsPerWeek": 0.024,
+      "extraCheckinsPerWeek": 0.304
+    },
+    {
+      "elevated": 45,
+      "high": 75,
+      "catchRate": 0.7582697201017812,
+      "escalationRate": 0.33587786259541985,
+      "sponsorPingsPerWeek": 0.016,
+      "extraCheckinsPerWeek": 0.304
+    },
+    {
+      "elevated": 45,
+      "high": 80,
+      "catchRate": 0.7582697201017812,
+      "escalationRate": 0.27989821882951654,
+      "sponsorPingsPerWeek": 0.01,
+      "extraCheckinsPerWeek": 0.304
+    },
+    {
+      "elevated": 45,
+      "high": 85,
+      "catchRate": 0.7582697201017812,
+      "escalationRate": 0.22391857506361323,
+      "sponsorPingsPerWeek": 0.002,
+      "extraCheckinsPerWeek": 0.304
+    },
+    {
+      "elevated": 45,
+      "high": 90,
+      "catchRate": 0.7582697201017812,
+      "escalationRate": 0.19083969465648856,
+      "sponsorPingsPerWeek": 0,
+      "extraCheckinsPerWeek": 0.304
+    },
+    {
+      "elevated": 50,
+      "high": 65,
+      "catchRate": 0.6870229007633588,
+      "escalationRate": 0.49872773536895676,
+      "sponsorPingsPerWeek": 0.038,
+      "extraCheckinsPerWeek": 0.222
+    },
+    {
+      "elevated": 50,
+      "high": 70,
+      "catchRate": 0.6870229007633588,
+      "escalationRate": 0.43765903307888043,
+      "sponsorPingsPerWeek": 0.024,
+      "extraCheckinsPerWeek": 0.222
+    },
+    {
+      "elevated": 50,
+      "high": 75,
+      "catchRate": 0.6870229007633588,
+      "escalationRate": 0.33587786259541985,
+      "sponsorPingsPerWeek": 0.016,
+      "extraCheckinsPerWeek": 0.222
+    },
+    {
+      "elevated": 50,
+      "high": 80,
+      "catchRate": 0.6870229007633588,
+      "escalationRate": 0.27989821882951654,
+      "sponsorPingsPerWeek": 0.01,
+      "extraCheckinsPerWeek": 0.222
+    },
+    {
+      "elevated": 50,
+      "high": 85,
+      "catchRate": 0.6870229007633588,
+      "escalationRate": 0.22391857506361323,
+      "sponsorPingsPerWeek": 0.002,
+      "extraCheckinsPerWeek": 0.222
+    },
+    {
+      "elevated": 50,
+      "high": 90,
+      "catchRate": 0.6870229007633588,
+      "escalationRate": 0.19083969465648856,
+      "sponsorPingsPerWeek": 0,
+      "extraCheckinsPerWeek": 0.222
+    }
+  ]
+}
