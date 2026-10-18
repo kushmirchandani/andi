@@ -1,9 +1,12 @@
 // Stateless test endpoint for the Daytona red team. Same brain and safety layer as production,
 // but nothing is sent over iMessage and nothing is stored. Protected by `x-test-key`.
+// Andi Gym passes a candidate `playbook` here to A/B it against the live one; the safety router
+// and the fixed safety rules in the prompt still apply, whatever the playbook says.
 
 import { Hono } from "hono";
 import { z } from "zod";
 import { think } from "../agent/brain.js";
+import { PLAYBOOK, PlaybookSchema } from "../agent/playbook.js";
 import { config } from "../config.js";
 import { errorBody } from "../http.js";
 import { safeEqual } from "../store.js";
@@ -22,12 +25,14 @@ const Body = z.object({
   }),
   history: z.array(z.object({ role: z.enum(["user", "assistant"]), content: z.string() })).default([]),
   message: z.string().min(1),
+  playbook: PlaybookSchema.optional(),
 });
 
 agentTest.post("/agent/test", async (c) => {
   if (!config.testKey || !safeEqual(c.req.header("x-test-key") ?? "", config.testKey))
     return c.json(errorBody("unauthorized", "Bad or missing x-test-key."), 401);
   const body = Body.parse(await c.req.json());
-  const result = await think(body.message, { ...body.persona, recent: [] }, body.history);
-  return c.json(result);
+  const result = await think(body.message, { ...body.persona, recent: [], playbook: body.playbook }, body.history);
+  // Echo which playbook answered, so Andi Gym can confirm the server honors its candidate.
+  return c.json({ ...result, playbook: (body.playbook ?? PLAYBOOK).version });
 });

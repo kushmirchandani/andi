@@ -75,19 +75,59 @@ test("quiet hours: no proactive nudges at 4am, nudges stop after two unanswered"
   await tick();
   assert.equal(photonOutbox.list().filter((m) => "text" in m.content && /thinking of you/.test(m.content.text)).length, 0);
 
-  // Evening: nudges allowed, every 3h, at most two in a row without a reply.
-  let t = new Date("2026-10-17T19:00:00-04:00").getTime();
-  for (let i = 0; i < 4; i++) {
-    clock.pin(new Date(t).toISOString());
+  // Friday evenings after linking (dates are in the future because linking uses the real clock;
+  // four HALT boxes + weekend night = elevated): nudges allowed every 3h,
+  // but at most two in a row without a reply, so the next weekend stays quiet.
+  for (const iso of ["2027-01-08T20:00:00-05:00", "2027-01-08T23:30:00-05:00", "2027-01-15T20:00:00-05:00", "2027-01-15T23:30:00-05:00"]) {
+    clock.pin(iso);
     store.update(personId, (x) => {
       x.checkins.push({ at: clock.now().toISOString(), hungry: true, angry: true, lonely: true, tired: true, source: "app" });
     });
     await tick();
-    t += 3.5 * 3600_000;
-    if (new Date(t).getHours() >= 2 && new Date(t).getHours() < 9) t += 8 * 3600_000;
   }
   const nudges = photonOutbox.list().filter((m) => "text" in m.content && /thinking of you/.test(m.content.text));
   assert.equal(nudges.length, 2);
+});
+
+const nudgesSent = () => photonOutbox.list().filter((m) => "text" in m.content && /thinking of you/.test(m.content.text)).length;
+
+// Four HALT boxes plus the late-night bump put risk above low, so Andi wants to check in.
+async function tickAt(personId: string, iso: string) {
+  clock.pin(iso);
+  store.update(personId, (x) => {
+    x.checkins.push({ at: clock.now().toISOString(), hungry: true, angry: true, lonely: true, tired: true, source: "app" });
+  });
+  await tick();
+}
+
+test("quiet hours: each person can set their own window", async () => {
+  const { personId, apiToken } = await seedLinked();
+  const me = await call("GET", "/api/me", { token: apiToken });
+  assert.deepEqual(me.json.quietHours, { enabled: true, start: 2, end: 9 }); // server default until they choose
+
+  const r = await call("PUT", "/api/quiet-hours", { token: apiToken, body: { enabled: true, start: 21, end: 1 } });
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.json.quietHours, { enabled: true, start: 21, end: 1 });
+
+  await tickAt(personId, "2026-10-17T02:00:00-04:00"); // inside the default window, outside theirs
+  assert.equal(nudgesSent(), 1);
+  await tickAt(personId, "2026-10-18T00:30:00-04:00"); // inside theirs, after midnight
+  assert.equal(nudgesSent(), 1);
+});
+
+test("quiet hours: turned off, Andi can check in any time", async () => {
+  const { personId, apiToken } = await seedLinked();
+  await call("PUT", "/api/quiet-hours", { token: apiToken, body: { enabled: false, start: 2, end: 9 } });
+  await tickAt(personId, "2026-10-17T02:00:00-04:00");
+  assert.equal(nudgesSent(), 1);
+});
+
+test("quiet hours: rejects an empty or impossible window", async () => {
+  const { apiToken } = await seedLinked();
+  for (const body of [{ enabled: true, start: 5, end: 5 }, { enabled: true, start: 24, end: 6 }, { enabled: true, start: 1.5, end: 6 }, { start: 22 }]) {
+    const r = await call("PUT", "/api/quiet-hours", { token: apiToken, body });
+    assert.equal(r.status, 400, JSON.stringify(body));
+  }
 });
 
 test("milestones are texted once", async () => {

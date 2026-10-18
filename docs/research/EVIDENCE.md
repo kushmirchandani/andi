@@ -56,6 +56,14 @@ Every vendor-facing claim the code and docs rely on, where it came from, and how
 | `new Daytona({apiKey})`, `create({language, envVars, labels, autoStopInterval, ephemeral})`, `fs.uploadFile`, `process.executeCommand`, `delete` | `node_modules/@daytona/sdk` types | Twice |
 | `messages.create` with `tools` + `tool_choice: {type: "tool"}`; client `timeout`, `maxRetries` | `node_modules/@anthropic-ai/sdk` 0.135.0 types | Read from types |
 | Model id `claude-sonnet-5-5` | Product information | Once |
+| Raw Messages API used by `redteam/adaptive-worker.mjs`: `POST https://api.anthropic.com/v1/messages` with headers `x-api-key`, `anthropic-version: 2023-06-01`, `content-type: application/json` | [Using the Messages API](https://platform.claude.com/docs/en/build-with-claude/working-with-messages) (curl examples) | Twice (docs page + matches the SDK's own requests) |
+| Forcing one tool: `tool_choice: {"type": "tool", "name": ...}`; tool fields `name` (regex `^[a-zA-Z0-9_-]{1,128}$`), `description`, `input_schema` (JSON Schema) | [Define tools](https://platform.claude.com/docs/en/agents-and-tools/tool-use/define-tools) | Twice (docs + SDK types). (Superseded by the correction below.) The page doesn't list supported JSON Schema keywords, so the tool schemas use only `type`, `properties`, `description`, `enum`, `required` (the keywords its examples show); `safety_gap` is an object with a `found` flag rather than a nullable union |
+| `temperature` / `top_p` / `top_k` are rejected on newer models, so the red team sends none | Same Messages API page (note at top) | Once |
+| The TS SDK reads `ANTHROPIC_BASE_URL` (used by the tests' fake Claude) | `node_modules/@anthropic-ai/sdk/client.js` constructor default | Read from source |
+| The LLM red team end to end (scenario writer → attacker → real Andi → judge → scorecard → Droid gap finder) | `backend/test/redteam.test.ts` against a local fake of the Messages API | Runs in `npm test` (3 tests) |
+| **Correction (2026-10-17, live test):** Claude Sonnet 5.5 rejects `tool_choice` `{"type":"tool"}` and `"any"` with a 400 ("tool_choice: type \"tool\" and \"any\" are not supported for this model"). The brain, red-team worker and scenario writer now use JSON outputs: `output_config: {format: {type: "json_schema", schema}}`, with `additionalProperties: false` on every object, read from the text block | [Sonnet 5.5 migration guide](https://platform.claude.com/docs/en/models/sonnet-5-5/migration-guide), [Structured outputs](https://platform.claude.com/docs/en/build-with-claude/structured-outputs), plus a live 400 and a live 200 against the API with the project key | Twice (two docs pages + live requests) |
+| `output_config.effort: "low"` for text replies (live reply in ~2.3s) | Same migration guide (effort replaces thinking budgets); live request | Twice |
+| Not yet run against real Claude: no `ANTHROPIC_API_KEY` in this environment. First real run's scorecard is the evidence to add | n/a | Open |
 
 ## Apple
 
@@ -74,3 +82,17 @@ Every vendor-facing claim the code and docs rely on, where it came from, and how
 | Chalk parity 5,000/5,000 | `npm run parity` |
 | Docker image runs and persists data across a SIGTERM | Built and run locally (with pre-installed node_modules; the sandbox couldn't reach npm from inside the build) |
 | iOS Core files compile | Swift 6.2 on Linux, Swift 5 mode, MainActor default isolation, with stubs for CoreLocation/CoreBluetooth. SwiftUI files not compiled |
+
+## Factory (Droid SDK)
+
+| Claim | Source | Checked | Used in |
+| --- | --- | --- | --- |
+| Prize rule: "Droid should do real work in the running product, not just help you write code. The repo README should explain where and how Droid is used." $2,000 cash, $200 credits per member | hhuh.io sponsor page (pulled earlier this session) | Re-read from the saved page text | README "Where and how Droid is used" |
+| `run()` from `@factory/droid-sdk/node`; options `cwd`, `apiKey`, `autonomyLevel`, `permissionHandler`, `outputFormat` (`OutputFormatType.JsonSchema`), `autoRejectPermissionRequests` | `@factory/droid-sdk@0.9.1` package types and examples (README, run.ts, structured-output.ts, permission-handler.ts) | Typechecked against the installed types | `droid/autofix.ts`, `droid/gaps.ts` |
+| Autonomy levels: Off "Ask before every action", Low "Allow file edits and read-only commands", Medium "Allow reversible commands", High "Allow commands without approval prompts" | docs.factory.com/sdk/typescript | Twice | guardrails |
+| "By default, the SDK starts the `droid` CLI from `PATH`"; "reads `FACTORY_API_KEY` from the process environment by default" | docs.factory.com/sdk/typescript | Twice | SETUP.md |
+| Omitting the permission handler or returning an unavailable value cancels the request | docs.factory.com/sdk/typescript | Twice | permission handler fallback |
+| Result subtypes: success, interrupted, error_during_execution, error_structured_output | docs.factory.com/sdk/typescript | Twice | report.json |
+| CLI install `curl -fsSL https://app.factory.ai/cli | sh`; API keys at app.factory.ai/settings/api-keys | docs.factory.com/docs/droid-exec/overview | Once; installer ran here (Factory CLI v0.244.0, checksum verified) | SETUP.md, CI |
+| Without a key the SDK fails fast: "No Factory API key found…" | Ran here | Observed | — |
+| A real Droid session has not been run yet (no key in this session) | — | — | Pipeline proven with a stand-in fixer: verified run, plus rejections for an out-of-scope edit and an incomplete fix |

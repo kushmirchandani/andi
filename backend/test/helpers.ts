@@ -47,6 +47,7 @@ export async function inbound(from: string, payload: { text?: string; pollVote?:
 
 export function reset() {
   for (const p of store.all()) store.remove(p.id);
+  for (const s of store.signIns()) store.removeSignIn(s.id);
   photonOutbox.clear();
   clock.pin(null);
 }

@@ -14,7 +14,7 @@ kill_timeout = '10s'
   APP_TIMEZONE = 'America/New_York'
   DATA_DIR = '/data'
   PORT = '8080'
-  PUBLIC_URL = 'https://andi-backend.fly.dev'
+  PUBLIC_URL = 'https://andi-tdc-backend.fly.dev'
 
 [[mounts]]
   source = 'andi_data'

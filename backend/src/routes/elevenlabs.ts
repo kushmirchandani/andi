@@ -74,5 +74,6 @@ elevenlabsRoutes.post("/tools/breathe", async (c) => {
   const b = ToolBody.parse(await c.req.json().catch(() => ({})));
   const p = b.caller_id ? store.linkedByPhone(b.caller_id) : undefined;
   if (p) await startBreathing(p.id, "voice");
-  return c.json({ ok: Boolean(p), result: p ? "Breathing round started on their chip." : "Unknown caller." });
+  const where = config.features.chip ? "on their chip" : "and texted them the steps (they can follow along in the Andi app)";
+  return c.json({ ok: Boolean(p), result: p ? `Breathing round started ${where}. Breathe with them out loud: in for 4, hold for 4, out for 6.` : "Unknown caller." });
 });

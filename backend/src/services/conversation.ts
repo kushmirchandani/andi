@@ -6,7 +6,13 @@
 //      immediately, with no typing delay, and the rest of the pipeline never replaces it.
 //   2. Sponsor links: anyone whose number someone picked as "their person" is linked on their
 //      first message (even if they're also an Andi user themselves).
-//   3. Resolve the person:
+//   3. Sign-in codes from the app's first screen ("hi andi <code>" from the number typed there):
+//      - a linked account for the sender's handle         -> signed in: the account takes over the
+//                                                             install's token (other installs sign out)
+//      - no account                                        -> a verified new signup; /api/onboard
+//                                                             finishes it
+//      Andi's reply is the only place either outcome shows, so only that number's owner learns it.
+//   4. Resolve the person:
 //      - a linked account for this handle                  -> that person
 //      - "hi andi <code>" for a pending account            -> link it, but only if the sender's
 //        handle is the number typed at onboarding (or an iMessage email handle)
@@ -14,10 +20,11 @@
 //        for the same number)                             -> restore the existing account onto
 //                                                             the new install's token
 //      Phone-only linking is not allowed: anyone can type anyone's number at onboarding.
-//   4. Person -> conversation. Sponsor -> encouragement relay. Otherwise a stranger.
+//   5. Person -> conversation. Sponsor -> encouragement relay. Otherwise a stranger.
 
-import { think, type Turn } from "../agent/brain.js";
-import type { AgentContext } from "../agent/prompt.js";
+import { config } from "../config.js";
+import { think, type BrainContext, type Turn } from "../agent/brain.js";
+import { copingMentions, patternMemory } from "../risk/patterns.js";
 import { routeInbound, violatesGuard } from "../agent/safety.js";
 import { clock } from "../clock.js";
 import { log, mask } from "../log.js";
@@ -31,15 +38,16 @@ import { checkinReply, evaluate, onCheckin, onSlip, startBreathing } from "./eng
 import { releaseSponsorLine } from "./lines.js";
 import { updateSponsorStatus } from "./sponsor.js";
 import { personTarget, sponsorTarget, textPerson, textSponsor } from "./targets.js";
+import { heart, sendVoiceNote } from "./rich.js";
 
 const MAX_CHAT_TURNS = 20;
 const UNKNOWN_REPLY_GAP_MS = 24 * 3600_000;
 const CODE_ATTEMPTS_PER_HOUR = 5;
 
-export function agentContext(p: Person): AgentContext {
+export function agentContext(p: Person): BrainContext {
   const recent = p.events
     .slice(-8)
-    .filter((e) => !["inbound", "outreach", "risk_change"].includes(e.kind))
+    .filter((e) => !["inbound", "outreach", "risk_change", "voice_note"].includes(e.kind))
     .map((e) => `${e.kind}${e.detail ? ` (${e.detail})` : ""}`);
   return {
     name: p.name,
@@ -50,6 +58,7 @@ export function agentContext(p: Person): AgentContext {
     riskReasons: p.lastRisk?.reasons ?? [],
     localTime: localClockParts(clock.now(), p.timezone).label,
     recent,
+    memory: patternMemory(p.patterns),
   };
 }
 
@@ -66,6 +75,66 @@ function recordBadCode(handle: string) {
   const a = codeAttempts.get(handle);
   if (!a || a.resetAt <= now) codeAttempts.set(handle, { n: 1, resetAt: now + 3600_000 });
   else a.n++;
+}
+
+// A sign-in code from the app's first screen. Returns true when the message was one (handled here).
+async function handleSignIn(m: PhotonMessage, safetyReply?: string) {
+  const code = extractCode(m);
+  const handle = normalizeHandle(m.sentBy.handle);
+  if (!code || !codeAttemptAllowed(handle)) return false;
+  const s = store.signInByCode(code);
+  if (!s) return false;
+  // Same rule as linking: the code must come from the number typed in the app (or an iMessage
+  // email handle, which can only reach its own account below).
+  if (!handle.includes("@") && handle !== s.phone) {
+    recordBadCode(handle);
+    log.warn("signin", `code for ${s.id} sent from a different number (${mask(handle)}); ignored`);
+    return false;
+  }
+  await photon.markRead(m.id);
+
+  const existing = store.linkedByPhone(handle);
+  if (existing) {
+    store.update(existing.id, (x) => {
+      x.apiToken = s.token; // the old install's token stops working
+      x.linkCode = undefined;
+      x.photon.lastInboundAt = nowIso();
+    });
+    store.removeSignIn(s.id); // the line stays: the account uses the same handle
+    store.log(existing.id, { kind: "restored" });
+    log.info("signin", `signed in ${existing.id} on a new install (${mask(handle)})`);
+    if (!safetyReply) {
+      const p = store.must(existing.id);
+      await textPerson(p, `welcome back, ${p.name.toLowerCase()}. you're signed in on this phone. day ${daysSober(p)}.`);
+    }
+    return true;
+  }
+
+  store.updateSignIn(s.id, (x) => {
+    x.verifiedAt = nowIso();
+    x.phone = handle;
+    x.photon.spaceId = m.space.id;
+    x.photon.agentUserId = m.receivedBy?.id;
+    x.photon.userId = m.sentBy.id;
+    x.photon.lastInboundAt = nowIso();
+    if (m.receivedBy?.handle && !x.photon.andiNumber) x.photon.andiNumber = m.receivedBy.handle;
+  });
+  log.info("signin", `verified new signup ${s.id} (${mask(handle)})`);
+  if (!safetyReply && m.receivedBy) {
+    await photon
+      .text({ spaceId: m.space.id, senderId: m.receivedBy.id }, "hi, i'm andi. really glad you're here. finish setting up in the app and i'll be right here.")
+      .catch((err) => log.error("signin", "welcome text failed", err));
+  }
+  return true;
+}
+
+// The first texts to someone whose signup was verified before onboarding (see /api/onboard).
+export async function welcomeNewPerson(p: Person) {
+  await textPerson(
+    p,
+    `hey ${p.name.toLowerCase()}, it's andi. save me in your phone. text me anytime, especially the hard nights.`,
+    `day ${daysSober(p)}. that's real. proud of you.`,
+  );
 }
 
 // Find (and if needed, link or restore) the person this message is from.
@@ -166,6 +235,7 @@ export async function handlePhotonEvent(event: PhotonEvent) {
 
   const safety = await safetyFirst(m, text);
   await linkSponsorships(m);
+  if (await handleSignIn(m, safety?.reply)) return;
 
   const resolved = resolvePerson(m);
   if (resolved) return handlePersonMessage(resolved.person, m, resolved.restored, safety?.reply);
@@ -232,11 +302,7 @@ async function handlePersonMessage(p: Person, m: PhotonMessage, restored: boolea
     return;
   }
   if (firstContact) {
-    await textPerson(
-      store.must(p.id),
-      `hey ${p.name.toLowerCase()}, it's andi. save me in your phone. text me anytime, especially the hard nights.`,
-      `day ${daysSober(p)}. that's real. proud of you.`,
-    );
+    await welcomeNewPerson(store.must(p.id));
     return;
   }
 
@@ -273,9 +339,17 @@ async function handlePersonMessage(p: Person, m: PhotonMessage, restored: boolea
   }
   if (/^breathe?[.!]*$/i.test(text)) {
     await startBreathing(p.id, "imessage");
-    await textPerson(store.must(p.id), "ok. in for 4, hold 4, out for 6. if you have your chip, follow the light. i'm right here.");
+    await textPerson(
+      store.must(p.id),
+      config.features.chip
+        ? "ok. in for 4, hold 4, out for 6. if you have your chip, follow the light. i'm right here."
+        : "ok. in for 4, hold 4, out for 6. tap breathe in the andi app (or its widget, or your action button) to follow the circle. i'm right here.",
+    );
     return;
   }
+
+  // "went for a walk", "heading to a meeting": only the kind is kept, for what-helped learning.
+  for (const kind of copingMentions(text)) store.log(p.id, { kind: "coping", detail: kind });
 
   await evaluate(p.id, "inbound");
   const fresh = store.must(p.id);
@@ -290,6 +364,10 @@ async function handlePersonMessage(p: Person, m: PhotonMessage, restored: boolea
   if (result.intent === "slip") await onSlip(p.id, text.slice(0, 140));
 
   await textPerson(store.must(p.id), result.reply);
+
+  // A win gets a heart on their own message, the way a friend would react.
+  if (result.celebrate && (result.route === "model" || result.route === "fallback")) await heart(store.must(p.id), m.id);
+  if (result.intent === "voice_note") await sendVoiceNote(store.must(p.id), result.reply, "asked");
 
   if (result.intent === "call_person") await callPerson(p.id, "imessage");
   if (result.intent === "breathe") await startBreathing(p.id, "imessage");

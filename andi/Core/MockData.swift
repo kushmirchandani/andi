@@ -51,6 +51,9 @@ enum MockData {
         return copy
     }()
 
+    static let signInStart = SignInStart(signInToken: "demo", linkCode: "482913", firstText: "hi andi",
+                                         agentHandle: "+15555550100")
+
     static let medicalFirstMessage = "Before you stop, please talk to a doctor. For some people, stopping alcohol suddenly can cause dangerous withdrawal, and a doctor can help you do it safely. SAMHSA's free, confidential helpline is 1-800-662-4357, 24/7. Andi will be with you the whole way."
 
     static func onboardResponse(medicalFirst: Bool = false) -> OnboardResponse {
@@ -93,11 +96,14 @@ enum MockData {
 
 extension AppModel {
     /// A model on sample data for `#Preview` blocks. No Keychain, no network, no location.
-    static func preview(_ phase: Phase = .ready, me: Me? = MockData.me, onboard: OnboardResponse? = nil) -> AppModel {
+    static func preview(_ phase: Phase = .ready, me: Me? = MockData.me, onboard: OnboardResponse? = nil,
+                        signIn: SignInStart? = nil) -> AppModel {
         let model = AppModel(demo: true)
         model.phase = phase
         model.me = me
         model.onboardResult = onboard
+        model.signIn = signIn
+        model.needsMedicalAck = onboard?.screening.medicalFirst ?? false
         return model
     }
 }

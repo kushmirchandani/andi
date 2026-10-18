@@ -8,12 +8,22 @@ export const SAMHSA_LINE = "1-800-662-4357";
 // Text is normalized first (see normalizeForSafety): iPhones send curly apostrophes, people
 // split "my self", drop apostrophes ("dont"), and use shorthand ("kms", "unalive").
 const CRISIS = [
-  /\b(kill|hurt|harm|cutt?|hang|shoot|drown|stab|poison)(ing)?\s+(myself|me)\b/,
+  // "myself" only: "this craving is killing me" and "one won't kill me" are idioms, not crisis.
+  /\b(kill|hurt|harm|cutt?|hang|shoot|drown|stab|poison)(ing)?\s+myself\b/,
   /\b(kms|kys|unalive|suicid|self[- ]?harm)/,
-  /\bend(ing)?\s+(it all|my life|things|it)\b(?!\s+with)/,
-  /\b((want(ed)?|going|ready|about|trying) to|wanna|gonna) die\b|\bwish i (was|were) dead\b|\bbetter off (dead|without me)\b/,
+  /\bend(ing)?\s+(it all|my life|things|it|everything)\b(?!\s+with)/,
+  /\b((want(ed)?|going|ready|about|trying) to|wanna|gonna) die\b|\bwish i (was|were) dead\b/,
+  /\bbetter off (dead|without me)\b|\bbetter off if i (was|were|wasn'?t|weren'?t) (gone|here|around|alive|dead)\b/,
   /\b(do ?n'?t|dont|do not) (want|wanna)( to)? (be alive|live|wake up|be here anymore|exist|go on)\b/,
+  /\b(go to )?sleep and (never|not) wake up\b/,
   /\bno (reason|point) (to|in) (live|living|being here|going on)\b|\bcan'?t (go on|do this anymore|keep living)\b/,
+  /\b(do ?n'?t|dont|do not|can'?t) see (the|a|any) point( in (living|anything|going on|any of it))?( anymore)?\b/,
+  /\b(nobody|no one) would (even )?(notice|care|miss me)\b/,
+  /\bdisappear (forever|for good)\b|\bwant to (just )?disappear\b/,
+  /\b(goodbye|suicide) (letter|note)\b|\bsaying goodbye to everyone\b/,
+  /\bdone\b.{0,20}\b(all of it|everything|life|living)\b.{0,20}\bfor good\b|\bdone with (life|living)\b/,
+  /\bhow (many|much) (pills|tablets|meds)\b.{0,30}\b(take|takes|kill|die|enough)\b|\bhow much .{0,20}\b(to )?(die|overdose)\b/,
+  /\b(bought|got|have) (a )?(rope|noose)\b/,
   /\b(overdos|od'?ed|(take|took|taking|swallow(ed)?) (all|a bunch of|a whole bottle of) (my |the |those )?(pills|meds|tablets))/,
   /\b(jump|jumping) (off|from) (a|the) (bridge|roof|building)\b/,
 ];

@@ -1,6 +1,6 @@
 # Backend API
 
-Base URL: `https://andi-backend.fly.dev` (or `http://localhost:8080`). JSON in and out.
+Base URL: `https://andi-tdc-backend.fly.dev` (or `http://localhost:8080`). JSON in and out.
 
 **Auth:** every `/api/*` route except `POST /api/onboard` needs `Authorization: Bearer <apiToken>`. The app also sends `X-Timezone: <IANA zone>`; the server keeps the person's zone up to date from it.
 
@@ -23,12 +23,18 @@ Base URL: `https://andi-backend.fly.dev` (or `http://localhost:8080`). JSON in a
 
 ## iOS app (`/api`)
 
+Sign-in: the app's first screen sends the number to `POST /api/signin` and shows "text andi" with `firstText linkCode`. The response never says whether the number has an account. When the code arrives from that number, Andi replies in Messages and `GET /api/signin` moves on: `signed_in` (an existing account now uses `signInToken`; other installs get 401) or `verified` (no account: `POST /api/onboard` with `signInToken` creates it already linked). "Skip for now" also onboards with `signInToken`; the account stays pending with the same `linkCode` until the person texts it.
+
 | Method | Path | Body | Returns |
 | --- | --- | --- | --- |
-| POST | `/api/onboard` | `{name, phone, soberSince: "YYYY-MM-DD", weeklyDrinkSpend, screening: {drinksPerDay, drinksDaily, morningDrinking, pastWithdrawal}, sponsor?: {name, phone}, consents?, why?, timezone?}` | `{apiToken, screening: {medicalFirst, message}, agentHandle, voiceNumber, firstText, linkCode, me}` |
+| POST | `/api/signin` | `{phone}` | `{signInToken, linkCode, firstText, agentHandle}`. Identical for every number. No auth. 20/hour per IP |
+| GET | `/api/signin` | (Bearer `signInToken`) | `{state: waiting \| verified \| signed_in}`. 401 when expired (48 h) |
+| POST | `/api/onboard` | `{name, signInToken?, phone?, soberSince: "YYYY-MM-DD", weeklyDrinkSpend, screening: {drinksPerDay, drinksDaily, morningDrinking, pastWithdrawal}, sponsor?: {name, phone}, consents?, why?, timezone?}` | `{apiToken, screening: {medicalFirst, message}, agentHandle, voiceNumber, firstText, linkCode, me}` |
+| POST | `/api/signout` | | 204. Retires this token; the account stays |
 | GET | `/api/me` | | `Me` |
 | DELETE | `/api/me` | | 204. Deletes everything |
 | PUT | `/api/consents` | `Consents` | `Me` |
+| PUT | `/api/quiet-hours` | `QuietHours` | `Me` |
 | PUT | `/api/sponsor` | `{name, phone}` | `Me`. Same number keeps the iMessage link |
 | DELETE | `/api/sponsor` | | `Me` |
 | GET | `/api/places` | | `[Place]` |
@@ -40,30 +46,40 @@ Base URL: `https://andi-backend.fly.dev` (or `http://localhost:8080`). JSON in a
 | POST | `/api/why` | `{text}` or an `audio/*` body | `{ok}` |
 | GET | `/api/why/audio` | | `audio/mp4` |
 | POST | `/api/call` | | `{ok, via: voice \| text \| none \| cooldown}` |
-| POST | `/api/breathe` | | `{ok}` |
+| POST | `/api/breathe` | | `{ok}`. Logs a round; the app's breathing screen calls it |
 | POST | `/api/slip` | `{note?}` | `{risk, safety, message}` (`message` is the crisis reply when `safety` is set) |
 | GET | `/api/risk` | | `Risk` (re-scores now) |
 | GET | `/api/wrapped` | | Andi Wrapped stats |
 | GET | `/api/events` | | Last 100 events, newest first |
-| POST | `/api/chip/pair` | | `{chipToken, wsUrl}`. The token is pending until a chip connects with it |
-| DELETE | `/api/chip` | | `Me` |
+| POST | `/api/chip/pair` | | *Paused (404 `feature_off` unless `FEATURE_CHIP=1`).* `{chipToken, wsUrl}`. The token is pending until a chip connects with it |
+| DELETE | `/api/chip` | | `Me`. *Paused like pairing.* |
 
 ### Types
 
 ```ts
 Me {
   id, name, day: number, soberSince, moneySaved: number,
-  risk: Risk | null, consents: Consents, places: Place[],
+  risk: Risk | null, consents: Consents, quietHours: QuietHours, places: Place[],
   sponsor: { name, phone, linked: boolean, andiNumber: string | null } | null,
   imessageLinked: boolean,
   agentHandle: string | null,     // the number THIS person texts (their Photon line)
   voiceNumber: string | null,     // Andi's voice number
+  features: { chip: boolean },   // false while the chip is paused; the app hides its section
   chipPaired: boolean, chipOnline: boolean, medicalFirst: boolean,
   portalUrl: string | null,       // the sponsor's portal
   linkCode: string | null,        // until linked
-  why: string | null, hasWhyAudio: boolean, findMyAvailable: boolean
+  why: string | null, hasWhyAudio: boolean, findMyAvailable: boolean,
+  patterns: Patterns              // what Andi has learned from their own history
+}
+Patterns {                        // all null / 0 until ready (about 2 weeks and 6 hard moments)
+  ready: boolean,
+  riskyWindow: { weekday: 0-6 | null, startHour: 0-23, hours: number, label: string } | null,  // weekday null = most days; label e.g. "friday 8pm–11pm"
+  whatHelped: { kind: "walk" | "breathe" | "call" | "meeting" | "talk" | "workout" | "music", label: string } | null,  // label e.g. "a walk"
+  topTrigger: { kind: "hungry" | "angry" | "lonely" | "tired" | "places", label: string } | null,
+  confidence: number              // 0-100
 }
 Consents { location: boolean, purchases: boolean, shareWithSponsor: "none" | "status" | "status_and_reason", sponsorAlerts: boolean }
+QuietHours { enabled: boolean, start: 0-23, end: 0-23 }  // local hours, end exclusive, may wrap midnight; server default until set
 Risk { score: number, level: "low" | "elevated" | "high", reasons: string[], source: "chalk" | "local", at?: string }
 Place { id, name, lat, lng, radiusM, kind, alternative? }
 ```
@@ -75,7 +91,9 @@ Place { id, name, lat, lng, radiusM, kind, alternative? }
 | GET | `/s/:portalToken` | HTML status page (auto-refreshes every 30 s) |
 | GET | `/s/:portalToken/status.json` | `{name, day, sharing, status, level, reason, updatedAt}`; fields the person doesn't share are `null` |
 
-## Chip WebSocket
+## Chip WebSocket (paused)
+
+Refused while `FEATURE_CHIP` is off. Kept for when the chip comes back.
 
 `wss://<host>/chip?token=<chipToken>`
 
@@ -91,6 +109,12 @@ Place { id, name, lat, lng, radiusM, kind, alternative? }
 | POST `/elevenlabs/tools/call-person` | Agent tool | `{ok, result}` |
 | POST `/elevenlabs/tools/breathe` | Agent tool | `{ok, result}` |
 
+## Nessie webhook (`/nessie`, header `Nessie-Signature`)
+
+| Path | Called by | Returns |
+| --- | --- | --- |
+| POST `/nessie/webhook` | Nessie v2 notify hook (`transaction.created`), registered by the server on boot | `{ok, result: "alcohol_purchase" \| "not_alcohol" \| "unknown_account" \| "ignored" \| "duplicate"}`; 401 on a bad signature |
+
 ## Demo and testing (`/demo`, header `x-demo-key`)
 
 Off in production unless `DEMO_KEY` is set.
@@ -100,12 +124,14 @@ Off in production unless `DEMO_KEY` is set.
 | POST | `/demo/seed` | `{name?, phone?, sponsorName?, sponsorPhone?, days?}` | Maya, day 41, sponsor Sam, The Rusty Anchor. Creates Photon line assignments and a Nessie account when configured |
 | POST | `/demo/clock` | `{iso}` or `{iso: null}` | Pin "now" (e.g. Friday 11:05 pm) |
 | POST | `/demo/inbound` | `{from, text?}` / `{from, pollVote: [...]}` / `{from, reaction}` | Simulate an iMessage arriving; returns Andi's replies |
-| GET / DELETE | `/demo/outbox` | | What Andi sent (or would have, in dry-run) |
+| GET / DELETE | `/demo/outbox` | | What Andi sent (or would have, in dry-run). Images and voice notes show `file: {contentType, sizeBytes, filename}`, never the bytes |
+| GET | `/demo/card/:kind` | `?day=30` | Preview an iMessage image card as PNG: `milestone`, `recap` or `avatar` |
 | POST | `/demo/place-enter` | `{personId?}` | Enter the first risk place |
 | POST | `/demo/purchase` | `{amount?, merchant?}` | Liquor-store purchase (real Nessie purchase when configured) |
 | POST | `/demo/checkin-poll` | | Send the HALT poll |
 | POST | `/demo/advance` | `{days}` | Move the sober date back, run a tick, return Wrapped |
 | POST | `/demo/tick` | | Run the 10-minute job now |
+| POST | `/demo/seed-history` | `{personId?, weeks?}` | **Demo data.** Writes 2–8 weeks of synthetic history (Friday evenings are hard, a walk helps), re-learns patterns, and returns them with `nudgeAt` (pin the clock there, then tick, to see Andi's pre-window text) and `nudgePreview` |
 | GET | `/demo/state` | `?personId=` | Raw person record |
 | GET | `/demo/chip` | | Chip online + last state |
 | POST | `/demo/reset` | | Delete everyone, unpin the clock |
@@ -123,4 +149,4 @@ Returns `{reply, intent, halt, route: crisis | withdrawal_emergency | model | fa
 
 ## Health
 
-`GET /health` (200, or 503 when the Photon stream has been down over 5 minutes) → `{ok, version, uptimeS, people, chipsOnline, sponsors: {photon: dry-run | connecting | subscribed | disconnected, chalk: local | live | "degraded (local fallback)", nessie, anthropic, elevenlabs, findMy}, photon: {cursor, lastEventAt}}`
+`GET /health` (200, or 503 when the Photon stream has been down over 5 minutes) → `{ok, version, uptimeS, people, features: {chip}, chipsOnline, sponsors: {photon: dry-run | connecting | subscribed | disconnected, chalk: local | live | "degraded (local fallback)", nessie: false | "api" | "webhook", anthropic, elevenlabs, findMy}, photon: {cursor, lastEventAt}}`

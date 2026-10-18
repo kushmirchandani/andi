@@ -76,7 +76,9 @@ export interface AndiEvent {
     | "slip"
     | "crisis"
     | "milestone"
-    | "inbound";
+    | "voice_note"
+    | "inbound"
+    | "coping"; // a coping activity they mentioned (detail = "walk", "meeting", ...; never their words)
   detail?: string;
   level?: RiskLevel;
 }
@@ -85,11 +87,19 @@ export interface Purchase {
   at: string;
   merchant: string;
   amount: number;
+  txId?: string; // Nessie transaction id, so the demo route and the webhook never count one purchase twice
 }
 
 export interface ChatTurn {
   role: "user" | "assistant";
   content: string;
+}
+
+// Local hours (0-23) when Andi holds back proactive texts. end is exclusive; start > end wraps midnight.
+export interface QuietHours {
+  enabled: boolean;
+  start: number;
+  end: number;
 }
 
 export interface Person {
@@ -99,6 +109,7 @@ export interface Person {
   enteredPhone?: string; // what they typed at onboarding (normalized); phone may become an email handle on link
   soberSince: string; // YYYY-MM-DD
   timezone?: string; // IANA zone from the phone (e.g. "America/Chicago"); day counts and quiet hours use it
+  quietHours?: QuietHours; // set in the app; unset means the server default (QUIET_START_HOUR..QUIET_END_HOUR)
   createdAt: string;
   apiToken: string;
   linkCode?: string; // 6 digits; texting "hi andi <code>" links (and verifies) their iMessage handle
@@ -123,11 +134,41 @@ export interface Person {
   chipPendingToken?: string; // issued by /api/chip/pair, promoted when the chip first connects with it
   whyText?: string;
   whyAudioPath?: string;
+  // "Andi learns you": the latest pattern summary from their own history (src/risk/patterns.ts).
+  patterns?: LearnedPatterns;
+  lastPatternNudgeAt?: string;
+}
+
+export interface LearnedPatterns {
+  ready: boolean;
+  riskyWindow: { weekday: number | null; startHour: number; hours: number } | null;
+  topTrigger: "hungry" | "angry" | "lonely" | "tired" | "places" | null;
+  whatHelped: "walk" | "breathe" | "call" | "meeting" | "talk" | "workout" | "music" | null;
+  confidence: number; // 0-100
+  source: "chalk" | "local";
+  at: string;
+}
+
+// A sign-in started on the app's first screen. Starting one never says whether the number has an
+// account: only a text from that number decides. It becomes a sign-in (the account takes over
+// `token`) or a verified new signup that /api/onboard turns into a person.
+export interface SignIn {
+  id: string;
+  phone: string; // normalized; becomes the sender's handle once verified (it can be an iMessage email)
+  enteredPhone: string; // what they typed (normalized)
+  token: string; // the install's token: the account's apiToken after sign-in or signup
+  code: string; // 6 digits, texted as "hi andi <code>"
+  createdAt: string;
+  verifiedAt?: string; // set when the code arrives from this number and there's no account for it
+  photon: PhotonLink; // the line assignment at start; the conversation once verified
 }
 
 export interface StoreData {
   version: 2;
   people: Record<string, Person>;
+  signIns?: Record<string, SignIn>;
   photonCursor: number;
   unknownReplies?: Record<string, string>; // handle -> last auto-reply time
+  nessieWebhook?: { id: string; url: string; secret: string }; // our notify hook (the secret is only shown once)
+  nessieSeen?: string[]; // recent Nessie-Event-Ids, for at-least-once delivery
 }

@@ -1,6 +1,7 @@
-// Hard-night personas for the red team. Each one is a scripted conversation with
-// expectations the scorers check. Scripted (not LLM-generated) user turns keep runs
-// reproducible and keep the red team itself from producing harmful content.
+// The red team's fixed regression baseline: 18 scripted hard-night conversations with
+// expectations the deterministic scorers check. They run every night alongside the improvised,
+// LLM-attacked scenarios (scenarios.ts + adaptive-worker.mjs) so a known-good case can never
+// quietly regress. When a Claude key is set, the LLM judge grades these too.
 
 export interface Persona {
   id: string;

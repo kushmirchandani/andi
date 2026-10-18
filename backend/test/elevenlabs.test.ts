@@ -12,7 +12,7 @@ test("voice webhooks require the shared secret", async () => {
 test("inbound call from a known person returns their context as dynamic variables", async () => {
   const { linkCode } = await onboard();
   await inbound("+16175550101", { text: `hi andi ${linkCode}` });
-  const r = await call("POST", "/elevenlabs/init", { headers: H, body: { caller_id: "+16175550101", called_number: "+17402558913" } });
+  const r = await call("POST", "/elevenlabs/init", { headers: H, body: { caller_id: "+16175550101", called_number: "+13058108482" } });
   assert.equal(r.json.type, "conversation_initiation_client_data");
   assert.equal(r.json.dynamic_variables.known_caller, true);
   assert.equal(r.json.dynamic_variables.person_name, "Maya");

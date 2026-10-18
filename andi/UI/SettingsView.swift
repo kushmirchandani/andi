@@ -7,6 +7,8 @@ struct SettingsView: View {
     // consents (local draft, saved on change)
     @State private var consents = Consents.defaults
     @State private var loaded = false
+    // quiet hours (local draft, saved on change)
+    @State private var quiet = QuietHours.defaults
     // your person
     @State private var personName = ""
     @State private var personPhone = ""
@@ -23,6 +25,8 @@ struct SettingsView: View {
     @State private var confirmDelete = false
     @State private var isDeleting = false
     @State private var showServer = false
+    // andi's look (saved by the persona lab)
+    @AppStorage(PersonaStyle.storageKey) private var personaJSON = ""
 
     private enum Field: Hashable { case personName, personPhone, why, ssid, password }
     @FocusState private var focus: Field?
@@ -30,6 +34,9 @@ struct SettingsView: View {
     var body: some View {
         Form {
             crisisSection
+            if model.me?.imessageLinked == false {
+                messagesSection
+            }
             if let error = model.lastError {
                 Section {
                     ErrorBanner(message: error) {
@@ -41,9 +48,11 @@ struct SettingsView: View {
                 .listRowInsets(EdgeInsets())
             }
             consentsSection
+            quietHoursSection
             personSection
             whySection
-            chipSection
+            if model.chipEnabled { chipSection } // paused (FEATURE_CHIP)
+            lookSection
             developerSection
             accountSection
         }
@@ -57,6 +66,7 @@ struct SettingsView: View {
             // Keep the draft in step with the server (e.g. after a refresh or a failed save).
             guard let newValue else { return }
             if newValue.consents != consents { consents = newValue.consents }
+            if newValue.quietHours != quiet { quiet = newValue.quietHours }
             if !loaded { load() }
         }
         .onChange(of: consents) { _, newValue in
@@ -65,6 +75,13 @@ struct SettingsView: View {
                 await model.updateConsents(newValue)
                 // If the save failed, snap the toggles back to what the server has.
                 if model.lastError != nil, let saved = model.me?.consents { consents = saved }
+            }
+        }
+        .onChange(of: quiet) { _, newValue in
+            guard loaded, let current = model.me?.quietHours, newValue != current, quietIsValid else { return }
+            Task {
+                await model.updateQuietHours(newValue)
+                if model.lastError != nil, let saved = model.me?.quietHours { quiet = saved }
             }
         }
         .onChange(of: model.chip.state) { _, newState in
@@ -124,6 +141,32 @@ struct SettingsView: View {
         .listRowBackground(Theme.card)
     }
 
+    /// Until they've texted andi once (they chose "later" during setup).
+    private var messagesSection: some View {
+        Section {
+            if let url = model.smsURL() {
+                Button {
+                    openURL(url)
+                } label: {
+                    Label("text andi", systemImage: "paperplane.fill")
+                }
+                .buttonStyle(.andiPrimary)
+            } else {
+                Text("andi's number isn't set up on this server yet.")
+                    .foregroundStyle(Theme.muted)
+            }
+            if let code = model.me?.linkCode {
+                LabeledContent("send this", value: "hi andi \(code)")
+                    .monospaced()
+            }
+        } header: {
+            Text("finish setting up")
+        } footer: {
+            Text("one text puts andi in your messages and confirms this is your number. andi can't text or call you until then.")
+        }
+        .listRowBackground(Theme.card)
+    }
+
     private var consentsSection: some View {
         Section {
             Toggle("notice when i'm near places i mark as risky", isOn: $consents.location)
@@ -132,6 +175,32 @@ struct SettingsView: View {
             Text("what andi can use")
         } footer: {
             Text("changes save right away.")
+        }
+        .listRowBackground(Theme.card)
+        .disabled(model.me == nil)
+    }
+
+    private var quietHoursSection: some View {
+        Section {
+            Toggle("hold check-ins while i sleep", isOn: $quiet.enabled)
+            if quiet.enabled {
+                Picker("from", selection: $quiet.start) {
+                    ForEach(0..<24, id: \.self) { Text(Self.hourLabel($0)).tag($0) }
+                }
+                Picker("until", selection: $quiet.end) {
+                    ForEach(0..<24, id: \.self) { Text(Self.hourLabel($0)).tag($0) }
+                }
+            }
+        } header: {
+            Text("quiet hours")
+        } footer: {
+            if !quietIsValid {
+                Text("pick a different start and end time.")
+            } else if quiet.enabled {
+                Text("andi won't start a conversation from \(Self.hourLabel(quiet.start)) to \(Self.hourLabel(quiet.end)). if you text andi, it always answers.")
+            } else {
+                Text("andi can check in any time, day or night.")
+            }
         }
         .listRowBackground(Theme.card)
         .disabled(model.me == nil)
@@ -238,6 +307,30 @@ struct SettingsView: View {
         .listRowBackground(Theme.card)
     }
 
+    private var lookSection: some View {
+        Section {
+            NavigationLink {
+                PersonaLabView()
+            } label: {
+                HStack(spacing: 14) {
+                    AndiPersona()
+                        .frame(width: 44, height: 44)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("persona lab")
+                        Text(PersonaStyle(json: personaJSON)?.name ?? PersonaStyle.standard.name)
+                            .font(Theme.caption)
+                            .foregroundStyle(Theme.muted)
+                    }
+                }
+            }
+        } header: {
+            Text("andi's look")
+        } footer: {
+            Text("experiment with how andi looks and moves.")
+        }
+        .listRowBackground(Theme.card)
+    }
+
     private var developerSection: some View {
         Section {
             Button {
@@ -290,6 +383,14 @@ struct SettingsView: View {
         return true
     }
 
+    private var quietIsValid: Bool { !quiet.enabled || quiet.start != quiet.end }
+
+    /// 0 -> "12 am", 13 -> "1 pm"
+    private static func hourLabel(_ hour: Int) -> String {
+        let h = hour % 12 == 0 ? 12 : hour % 12
+        return "\(h) \(hour < 12 ? "am" : "pm")"
+    }
+
     private var chipIsWorking: Bool {
         switch model.chip.state {
         case .scanning, .connecting, .sending, .waitingForWifi: true
@@ -316,6 +417,7 @@ struct SettingsView: View {
     private func load() {
         guard !loaded, let me = model.me else { return }
         consents = me.consents
+        quiet = me.quietHours
         personName = me.sponsor?.name ?? ""
         personPhone = me.sponsor?.phone ?? ""
         why = me.why ?? ""

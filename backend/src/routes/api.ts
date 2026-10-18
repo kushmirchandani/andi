@@ -1,4 +1,5 @@
-// Endpoints for the iOS app. Auth: `Authorization: Bearer <apiToken>` from /api/onboard.
+// Endpoints for the iOS app. Auth: `Authorization: Bearer <apiToken>`. The token is created by
+// POST /api/signin and becomes the account's token once the person texts Andi (or onboards).
 // Errors are always { error: "<code>", message: "<safe to show>" } (see index.ts onError).
 
 import { Hono } from "hono";
@@ -17,12 +18,22 @@ import { findMyEnabled, requestFindMy } from "../findmy/watcher.js";
 import { ApiError, errorBody, rateLimit } from "../http.js";
 import { log } from "../log.js";
 import { callPerson } from "../services/calls.js";
-import { evaluate, onCheckin, onPlaceEnter, onPlaceExit, onSlip, pushChip, saved, startBreathing } from "../services/engine.js";
-import { andiNumber, ensurePersonLine, ensureSponsorLine, healLines, releasePersonLines, releaseSponsorLine } from "../services/lines.js";
+import { evaluate, onCheckin, onPlaceEnter, onPlaceExit, onSlip, pushChip, quietHoursFor, saved, startBreathing } from "../services/engine.js";
+import { welcomeNewPerson } from "../services/conversation.js";
+import {
+  andiNumber,
+  ensurePersonLine,
+  ensureSignInLine,
+  ensureSponsorLine,
+  healLines,
+  releasePersonLines,
+  releaseSponsorLine,
+} from "../services/lines.js";
 import { clearSponsorStatus, portalUrl, updateSponsorStatus } from "../services/sponsor.js";
 import { wrapped } from "../services/wrapped.js";
 import { daysSober, id, isValidHandle, localDate, normalizeHandle, nowIso, store, token } from "../store.js";
 import type { Person } from "../types.js";
+import { patternsView } from "../risk/patterns.js";
 
 type Env = { Variables: { person: Person } };
 export const api = new Hono<Env>();
@@ -44,6 +55,11 @@ const Consents = z.object({
   sponsorAlerts: z.boolean(),
 });
 
+const Hour = z.number().int().min(0).max(23);
+const QuietHours = z
+  .object({ enabled: z.boolean(), start: Hour, end: Hour })
+  .refine((q) => !q.enabled || q.start !== q.end, { message: "Pick a different start and end time." });
+
 const SoberSince = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD.")
@@ -52,7 +68,9 @@ const SoberSince = z
 
 const Onboard = z.object({
   name: Name,
-  phone: Handle,
+  // From POST /api/signin. When present, the phone comes from the sign-in and `phone` is ignored.
+  signInToken: z.string().max(200).optional().nullable(),
+  phone: Handle.optional().nullable(),
   soberSince: SoberSince,
   weeklyDrinkSpend: z.number().nonnegative().max(10_000).default(0),
   screening: z.object({
@@ -66,6 +84,7 @@ const Onboard = z.object({
   why: z.string().trim().max(1000).optional().nullable(),
   timezone: z.string().max(64).optional().nullable(), // IANA zone from the phone
 }).superRefine((b, ctx) => {
+  if (!b.signInToken && !b.phone) ctx.addIssue({ code: "custom", path: ["phone"], message: "Enter a phone number with area code." });
   // "Today" depends on where the person is. Without a zone, accept anything that's today somewhere on Earth.
   const today = localDate(clock.now(), validTimezone(b.timezone) ?? "Pacific/Kiritimati");
   if (b.soberSince > today) ctx.addIssue({ code: "custom", path: ["soberSince"], message: "Your start date can't be in the future." });
@@ -97,6 +116,7 @@ export function summary(p: Person) {
     moneySaved: saved(p),
     risk: p.lastRisk ?? null,
     consents: p.consents,
+    quietHours: quietHoursFor(p),
     places: p.places,
     // andiNumber: the number their person texts to connect (it can differ from the person's own Andi number).
     sponsor: p.sponsor
@@ -105,24 +125,64 @@ export function summary(p: Person) {
     imessageLinked: linked,
     agentHandle: andiNumber(p.photon),
     voiceNumber: config.photon.voiceNumber || null,
-    chipPaired: Boolean(p.chipToken),
-    chipOnline: chipHub.connected(p.id),
+    // Paused features: the app hides the chip section when chip is false.
+    features: { chip: config.features.chip },
+    chipPaired: config.features.chip && Boolean(p.chipToken),
+    chipOnline: config.features.chip && chipHub.connected(p.id),
     medicalFirst: p.screening.medicalFirst,
     portalUrl: portalUrl(p),
     linkCode: linked ? null : (p.linkCode ?? null),
     why: p.whyText ?? null,
     hasWhyAudio: Boolean(p.whyAudioPath),
     findMyAvailable: findMyEnabled(),
+    // What Andi has learned from their own history (ready once there's ~2 weeks of it).
+    patterns: patternsView(p.patterns),
   };
 }
 
-// Public: create an account. The account is "pending" until the person texts Andi from their
-// phone (that first text verifies the number; see services/conversation.ts).
+const bearer = (c: { req: { header: (name: string) => string | undefined } }) =>
+  c.req.header("authorization")?.replace(/^Bearer\s+/i, "").trim() ?? "";
+
+// Public: the app's first screen. Starts a sign-in for a number and returns a code to text Andi.
+// The response is the same whether or not the number has an account; Andi's reply to the text
+// is the only place that shows (see handleSignIn in services/conversation.ts).
+api.post("/signin", rateLimit({ windowMs: 3600_000, max: 20 }), async (c) => {
+  const { phone: typed } = z.object({ phone: Handle }).parse(await json(c));
+  const phone = normalizeHandle(typed);
+  const s = store.putSignIn({ id: id("sgn"), phone, enteredPhone: phone, token: token(), code: linkCode(), createdAt: nowIso(), photon: {} });
+  await ensureSignInLine(s.id);
+  return c.json({
+    signInToken: s.token,
+    linkCode: s.code,
+    firstText: "hi andi",
+    agentHandle: andiNumber(s.photon),
+  });
+});
+
+// Public: the app polls this with the sign-in token while it waits for the text.
+//   waiting    no text yet
+//   verified   texted from that number and there's no account: finish with /api/onboard
+//   signed_in  texted and there's an account: the token now works everywhere (GET /api/me)
+api.get("/signin", (c) => {
+  const t = bearer(c);
+  if (store.byToken(t)) return c.json({ state: "signed_in" });
+  const s = store.signInByToken(t);
+  if (!s) return c.json(errorBody("unauthorized", "That sign-in expired. Start again."), 401);
+  return c.json({ state: s.verifiedAt ? "verified" : "waiting" });
+});
+
+// Public: create an account. With a verified sign-in the account is linked right away. Otherwise
+// it's "pending" until the person texts Andi from their phone (that first text verifies the
+// number; see services/conversation.ts). The app offers that text at the end and in Settings.
 api.post("/onboard", rateLimit({ windowMs: 3600_000, max: 20 }), async (c) => {
   const body = Onboard.parse(await json(c));
-  const phone = normalizeHandle(body.phone);
-  if (body.sponsor && normalizeHandle(body.sponsor.phone) === phone)
+  const signIn = body.signInToken ? store.signInByToken(body.signInToken) : undefined;
+  if (body.signInToken && !signIn) throw new ApiError(401, "unauthorized", "That sign-in expired. Start again.");
+  const phone = signIn ? signIn.phone : normalizeHandle(body.phone!);
+  const enteredPhone = signIn ? signIn.enteredPhone : phone;
+  if (body.sponsor && [phone, enteredPhone].includes(normalizeHandle(body.sponsor.phone)))
     throw new ApiError(400, "invalid_request", "Your person needs to be someone else's number.");
+  const verified = Boolean(signIn?.verifiedAt);
 
   // Abandoned pending accounts (never texted Andi) are cleaned up after 48 hours by the tick.
   // They're never removed here: anyone can type anyone's number, so that would let a stranger
@@ -133,12 +193,13 @@ api.post("/onboard", rateLimit({ windowMs: 3600_000, max: 20 }), async (c) => {
     id: id("per"),
     name: body.name,
     phone,
-    enteredPhone: phone,
+    enteredPhone,
     soberSince: body.soberSince,
     timezone: validTimezone(body.timezone),
     createdAt: nowIso(),
-    apiToken: token(),
-    linkCode: linkCode(),
+    apiToken: signIn?.token ?? token(),
+    // A skipped sign-in keeps its code, so the text the app offers later is the same one.
+    linkCode: verified ? undefined : (signIn?.code ?? linkCode()),
     screening: { ...body.screening, medicalFirst: result.medicalFirst },
     consents: body.consents ?? { location: true, purchases: true, shareWithSponsor: "status", sponsorAlerts: true },
     places: [],
@@ -147,7 +208,7 @@ api.post("/onboard", rateLimit({ windowMs: 3600_000, max: 20 }), async (c) => {
     events: [],
     purchases: [],
     chat: [],
-    photon: {},
+    photon: signIn ? { ...signIn.photon } : {},
     weeklyDrinkSpend: body.weeklyDrinkSpend,
     whyText: body.why || undefined,
     sponsor: body.sponsor
@@ -155,11 +216,14 @@ api.post("/onboard", rateLimit({ windowMs: 3600_000, max: 20 }), async (c) => {
       : undefined,
   };
   store.put(person);
+  if (signIn) store.removeSignIn(signIn.id); // its line now belongs to the person
   store.log(person.id, { kind: "onboarded" });
+  if (verified) store.log(person.id, { kind: "linked" });
   // Photon only delivers messages from assigned handles, so assign lines before they text.
   await Promise.all([ensurePersonLine(person.id), ensureSponsorLine(person.id)]);
   await evaluate(person.id, "onboard");
-  log.info("api", `onboarded ${person.id}${result.medicalFirst ? " (medical-first)" : ""}`);
+  log.info("api", `onboarded ${person.id}${verified ? " (verified)" : ""}${result.medicalFirst ? " (medical-first)" : ""}`);
+  if (verified) await welcomeNewPerson(store.must(person.id));
   return c.json({
     apiToken: person.apiToken,
     screening: result,
@@ -167,15 +231,14 @@ api.post("/onboard", rateLimit({ windowMs: 3600_000, max: 20 }), async (c) => {
     voiceNumber: config.photon.voiceNumber || null,
     // The shared Photon line can only reply after the person texts it first.
     firstText: "hi andi",
-    linkCode: person.linkCode,
+    linkCode: person.linkCode ?? null,
     me: summary(store.must(person.id)),
   });
 });
 
 // Everything below needs the person's token.
 api.use("/*", async (c, next) => {
-  const t = c.req.header("authorization")?.replace(/^Bearer\s+/i, "").trim() ?? "";
-  const p = store.byToken(t);
+  const p = store.byToken(bearer(c));
   if (!p) return c.json(errorBody("unauthorized", "Please sign in again."), 401);
   // The app sends its current time zone on every request, so day counts follow travel.
   const tz = validTimezone(c.req.header("x-timezone"));
@@ -192,6 +255,15 @@ const me = (c: { get: (k: "person") => Person }) => store.must(c.get("person").i
 api.get("/me", async (c) => {
   await healLines(me(c).id); // no-op once both lines are assigned
   return c.json(summary(me(c)));
+});
+
+// Sign out: retire this token on the server, so it stops working even if it was copied.
+// The account, its texts and calls are untouched; signing in again issues a new token.
+api.post("/signout", (c) => {
+  store.update(me(c).id, (x) => {
+    x.apiToken = token();
+  });
+  return c.body(null, 204);
 });
 
 // Permanently delete the account and everything Andi knows (App Store guideline 5.1.1(v)).
@@ -213,6 +285,15 @@ api.put("/consents", async (c) => {
   });
   await updateSponsorStatus(p);
   return c.json(summary(store.must(p.id)));
+});
+
+// When Andi holds back check-ins and milestone texts. Replies to the person are never delayed.
+api.put("/quiet-hours", async (c) => {
+  const quietHours = QuietHours.parse(await json(c));
+  const p = store.update(me(c).id, (x) => {
+    x.quietHours = quietHours;
+  });
+  return c.json(summary(p));
 });
 
 api.put("/sponsor", async (c) => {
@@ -383,6 +464,7 @@ api.get("/events", (c) => c.json(me(c).events.slice(-100).reverse()));
 // The new token is "pending" until a chip connects with it, so a failed pairing never knocks
 // a working chip offline. The first connection with it promotes it and retires the old one.
 api.post("/chip/pair", (c) => {
+  if (!config.features.chip) throw new ApiError(404, "feature_off", "The chip is paused.");
   const p = store.update(me(c).id, (x) => {
     x.chipPendingToken = token();
   });
@@ -391,6 +473,7 @@ api.post("/chip/pair", (c) => {
 });
 
 api.delete("/chip", (c) => {
+  if (!config.features.chip) throw new ApiError(404, "feature_off", "The chip is paused.");
   const p = store.update(me(c).id, (x) => {
     x.chipToken = undefined;
     x.chipPendingToken = undefined;

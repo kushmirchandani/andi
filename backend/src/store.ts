@@ -11,7 +11,7 @@ import crypto from "node:crypto";
 import { config } from "./config.js";
 import { clock } from "./clock.js";
 import { log as logger } from "./log.js";
-import type { AndiEvent, Person, StoreData } from "./types.js";
+import type { AndiEvent, Person, SignIn, StoreData } from "./types.js";
 
 const file = () => path.join(config.dataDir, "andi.json");
 let data: StoreData = { version: 2, people: {}, photonCursor: 0 };
@@ -46,7 +46,15 @@ export function loadStore() {
   if (!fs.existsSync(f)) return;
   try {
     const raw = JSON.parse(fs.readFileSync(f, "utf8")) as Partial<StoreData>;
-    data = { version: 2, people: raw.people ?? {}, photonCursor: raw.photonCursor ?? 0, unknownReplies: raw.unknownReplies ?? {} };
+    data = {
+      version: 2,
+      people: raw.people ?? {},
+      signIns: raw.signIns ?? {},
+      photonCursor: raw.photonCursor ?? 0,
+      unknownReplies: raw.unknownReplies ?? {},
+      nessieWebhook: raw.nessieWebhook,
+      nessieSeen: raw.nessieSeen ?? [],
+    };
     for (const p of Object.values(data.people)) migrate(p);
     logger.info("store", `loaded ${Object.keys(data.people).length} people, photon cursor ${data.photonCursor}`);
   } catch (err) {
@@ -111,7 +119,12 @@ export function safeEqual(a: string, b: string) {
 }
 
 const people = () => Object.values(data.people);
+const signIns = () => Object.values(data.signIns ?? {});
 const isLinked = (p: Person) => Boolean(p.photon.spaceId);
+
+// Link and sign-in codes are valid for 48 hours.
+export const CODE_TTL_MS = 48 * 3600_000;
+const fresh = (createdAt: string) => clock.now().getTime() - new Date(createdAt).getTime() < CODE_TTL_MS;
 
 export const store = {
   all: people,
@@ -133,15 +146,35 @@ export const store = {
     return matches.find(isLinked) ?? matches.at(-1);
   },
   linkedByPhone: (handle: string) => people().find((p) => isLinked(p) && samePhone(p.phone, handle)),
-  // Link codes are valid for 48 hours after onboarding.
-  byLinkCode: (code: string) =>
-    people().find(
-      (p) => !isLinked(p) && p.linkCode === code && clock.now().getTime() - new Date(p.createdAt).getTime() < 48 * 3600_000,
-    ),
+  byLinkCode: (code: string) => people().find((p) => !isLinked(p) && p.linkCode === code && fresh(p.createdAt)),
   bySponsorPhone: (handle: string) => people().find((p) => p.sponsor && samePhone(p.sponsor.phone, handle)),
   // Everyone who picked this handle as their person (one person can sponsor several).
   allBySponsorPhone: (handle: string) => people().filter((p) => p.sponsor && samePhone(p.sponsor.phone, handle)),
-  linkCodeInUse: (code: string) => people().some((p) => !isLinked(p) && p.linkCode === code),
+  linkCodeInUse: (code: string) =>
+    people().some((p) => !isLinked(p) && p.linkCode === code) || signIns().some((s) => s.code === code),
+
+  signIns,
+  signInByToken: (t: string) => (t ? signIns().find((s) => safeEqual(s.token, t)) : undefined),
+  // Only unverified sign-ins wait for a code; a verified one is waiting for /api/onboard.
+  signInByCode: (code: string) => signIns().find((s) => !s.verifiedAt && s.code === code && fresh(s.createdAt)),
+  putSignIn(s: SignIn) {
+    data.signIns ??= {};
+    data.signIns[s.id] = s;
+    persist();
+    return s;
+  },
+  updateSignIn(signInId: string, fn: (s: SignIn) => void) {
+    const s = data.signIns?.[signInId];
+    if (!s) throw new Error(`Unknown sign-in ${signInId}`);
+    fn(s);
+    persist();
+    return s;
+  },
+  removeSignIn(signInId: string) {
+    if (!data.signIns?.[signInId]) return;
+    delete data.signIns[signInId];
+    persist();
+  },
 
   put(person: Person) {
     data.people[person.id] = migrate(person);
@@ -171,6 +204,23 @@ export const store = {
   },
   set photonCursor(seq: number) {
     data.photonCursor = seq;
+    persist();
+  },
+
+  get nessieWebhook() {
+    return data.nessieWebhook;
+  },
+  set nessieWebhook(hook: StoreData["nessieWebhook"]) {
+    data.nessieWebhook = hook;
+    persist();
+  },
+  nessieSeen(eventId: string) {
+    return data.nessieSeen?.includes(eventId) ?? false;
+  },
+  markNessieSeen(eventId: string) {
+    data.nessieSeen ??= [];
+    data.nessieSeen.push(eventId);
+    if (data.nessieSeen.length > 1000) data.nessieSeen.splice(0, data.nessieSeen.length - 1000);
     persist();
   },
 

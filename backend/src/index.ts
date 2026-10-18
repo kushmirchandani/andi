@@ -4,6 +4,7 @@ import { chipHub } from "./chip/hub.js";
 import { config, configWarnings, enabled } from "./config.js";
 import { startFindMyWatcher } from "./findmy/watcher.js";
 import { log } from "./log.js";
+import { ensureNessieWebhook } from "./nessie/webhook.js";
 import { startPhotonStream, stopPhotonStream } from "./photon/events.js";
 import { callPerson } from "./services/calls.js";
 import { handlePhotonEvent } from "./services/conversation.js";
@@ -13,8 +14,9 @@ import { flushStore, loadStore } from "./store.js";
 loadStore();
 for (const w of configWarnings()) log.warn("config", w);
 
-// Chip events: tap = breathe, long press = call your person.
+// Chip events: tap = breathe, long press = call your person. Only while the chip feature is on.
 chipHub.onChipEvent((personId, e) => {
+  if (!config.features.chip) return;
   if (e.type === "tap") void startBreathing(personId, "chip").catch((err) => log.error("chip", "breathe failed", err));
   if (e.type === "long_press") void callPerson(personId, "chip").catch((err) => log.error("chip", "call failed", err));
 });
@@ -27,6 +29,7 @@ const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
     claude: enabled.anthropic(),
     elevenlabs: enabled.elevenlabs(),
     findMy: enabled.findmy(),
+    chip: config.features.chip,
   })
     .map(([k, v]) => `${k}=${v ? "live" : "off"}`)
     .join(" ");
@@ -34,10 +37,15 @@ const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
   if (enabled.demo() && !config.isProd) log.info("boot", `demo routes on, x-demo-key: ${config.demoKey}`);
 });
 
-server.on("upgrade", (req, socket, head) => chipHub.handleUpgrade(req, socket, head));
+// The chip WebSocket is the only upgrade; with the chip paused, refuse it.
+server.on("upgrade", (req, socket, head) => {
+  if (!config.features.chip) return socket.destroy();
+  chipHub.handleUpgrade(req, socket, head);
+});
 
 startPhotonStream(handlePhotonEvent);
 startFindMyWatcher();
+void ensureNessieWebhook().catch((err) => log.error("nessie", "webhook setup failed; purchases only arrive from /demo/purchase", err));
 
 let ticking = false;
 const ticker = setInterval(async () => {

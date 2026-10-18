@@ -1,0 +1,4 @@
+# Local-only tooling. parity/stub is a fake `chalk` package that must never be deployed.
+parity/
+evals/
+.venv/

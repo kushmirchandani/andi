@@ -6,14 +6,19 @@ struct OnboardingView: View {
     @Environment(AppModel.self) private var model
 
     private enum Step: Int, CaseIterable {
-        case welcome, basics, safety, person, share, why
+        case basics, safety, person, share, why
     }
 
-    @State private var step: Step = .welcome
+    @State private var step: Step = {
+        #if DEBUG
+        // `-ANDI_DEMO_STEP 1`: open on a later step, for UI work.
+        if let step = Step(rawValue: UserDefaults.standard.integer(forKey: "ANDI_DEMO_STEP")) { return step }
+        #endif
+        return .basics
+    }()
 
-    // basics
+    // basics (the phone number came from the sign-in screen)
     @State private var name = ""
-    @State private var phone = ""
     @State private var soberSince = Date.now
     @State private var weeklySpend = ""
     // safety
@@ -29,9 +34,8 @@ struct OnboardingView: View {
     @State private var why = ""
 
     @State private var validationMessage: String?
-    @State private var showServer = false
 
-    private enum Field: Hashable { case name, phone, spend, personName, personPhone, why }
+    private enum Field: Hashable { case name, spend, personName, personPhone, why }
     @FocusState private var focus: Field?
 
     private static let dayFormatter: DateFormatter = {
@@ -44,26 +48,48 @@ struct OnboardingView: View {
     }()
 
     var body: some View {
-        VStack(spacing: 0) {
-            ProgressDots(count: Step.allCases.count, current: step.rawValue)
-                .padding(.top, 12)
-                .padding(.bottom, 8)
+        ZStack {
+            AndiGlow(anchor: -0.05)
 
-            ScrollView {
-                stepContent
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(Theme.gutter)
-                    .id(step)
-                    .transition(.opacity)
+            VStack(spacing: 0) {
+                topBar
+                    .padding(.horizontal, Theme.gutter)
+                    .padding(.top, 8)
+
+                ScrollView {
+                    stepContent
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, Theme.gutter)
+                        .padding(.top, 28)
+                        .padding(.bottom, Theme.gutter)
+                        .id(step)
+                        .transition(.asymmetric(
+                            insertion: .opacity.combined(with: .offset(y: 12)),
+                            removal: .opacity
+                        ))
+                }
+                .scrollDismissesKeyboard(.interactively)
+
+                footer
             }
-            .scrollDismissesKeyboard(.interactively)
-
-            footer
         }
-        .background(Theme.background.ignoresSafeArea())
         .keyboardDoneButton { focus = nil }
-        .sheet(isPresented: $showServer) {
-            ServerSheet().environment(model)
+    }
+
+    private var topBar: some View {
+        HStack(spacing: 14) {
+            if step != .basics {
+                CircleIconButton(symbol: "chevron.left", label: "back") { go(to: step.rawValue - 1) }
+                    .disabled(model.isBusy)
+            } else if !model.signInVerified {
+                // Skipped the text: let them go back and send it after all.
+                CircleIconButton(symbol: "chevron.left", label: "back") { model.phase = .signIn }
+                    .disabled(model.isBusy)
+            } else {
+                Color.clear.frame(width: 44, height: 44)
+            }
+            StepBars(count: Step.allCases.count, current: step.rawValue)
+            Color.clear.frame(width: 44, height: 44)
         }
     }
 
@@ -71,7 +97,6 @@ struct OnboardingView: View {
 
     @ViewBuilder private var stepContent: some View {
         switch step {
-        case .welcome: welcome
         case .basics: basics
         case .safety: safety
         case .person: person
@@ -80,96 +105,74 @@ struct OnboardingView: View {
         }
     }
 
-    private var welcome: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Image(systemName: "sparkle")
-                .font(.largeTitle)
-                .foregroundStyle(Theme.accent)
-                .padding(.top, 40)
-                .accessibilityHidden(true)
-            Text("hi, i'm andi.")
-                .font(Theme.largeTitle)
-            Text("i live in your messages. text me any time, day or night: when it's hard, when it's good, or when you just need someone.")
-                .font(Theme.body)
-                .foregroundStyle(Theme.muted)
-            Text("a few quick questions and we're set.")
-                .font(Theme.body)
-                .foregroundStyle(Theme.muted)
-
-            #if DEBUG
-            Button {
-                showServer = true
-            } label: {
-                Label("server: \(model.baseURL.host() ?? model.baseURL.absoluteString)", systemImage: "server.rack")
-                    .font(Theme.caption)
-                    .foregroundStyle(Theme.muted)
-            }
-            .buttonStyle(.plain)
-            .padding(.top, 24)
-            .accessibilityHint("developer setting: change which server andi uses")
-            #endif
-        }
-    }
-
     private var basics: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            StepHeader(title: "the basics", subtitle: "so andi knows who it's talking to.")
+        VStack(alignment: .leading, spacing: 24) {
+            StepHeader(
+                title: "let's start with you",
+                subtitle: model.signInVerified
+                    ? "you're verified, and andi's in your messages. a few quick questions and you're set."
+                    : "so andi knows who it's talking to. a few quick questions and you're set."
+            )
 
             FieldGroup(label: "what should andi call you?") {
                 TextField("first name", text: $name)
+                    .font(.title3)
                     .nameInput()
                     .focused($focus, equals: .name)
-                    .submitLabel(.next)
-                    .onSubmit { focus = .phone }
-            }
-            FieldGroup(label: "your phone number") {
-                TextField("phone", text: $phone)
-                    .phoneInput()
-                    .focused($focus, equals: .phone)
+                    .submitLabel(.done)
             }
             FieldGroup(label: "sober since") {
-                DatePicker("sober since", selection: $soberSince, in: ...Date.now, displayedComponents: .date)
-                    .labelsHidden()
+                HStack {
+                    Text("my day one")
+                        .foregroundStyle(Theme.muted)
+                    Spacer()
+                    DatePicker("sober since", selection: $soberSince, in: ...Date.now, displayedComponents: .date)
+                        .labelsHidden()
+                }
             }
-            FieldGroup(label: "about how much did you spend on drinks a week?",
+            FieldGroup(label: "weekly drink spend",
                        footnote: "optional. andi uses it to show what you're saving.") {
-                TextField("e.g. 60", text: $weeklySpend)
-                    .decimalInput()
-                    .focused($focus, equals: .spend)
+                HStack(spacing: 4) {
+                    Text(currencySymbol)
+                        .font(.title3)
+                        .foregroundStyle(Theme.muted)
+                    TextField("60", text: $weeklySpend)
+                        .font(.title3)
+                        .decimalInput()
+                        .focused($focus, equals: .spend)
+                }
             }
         }
     }
 
     private var safety: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: 24) {
             StepHeader(
                 title: "keeping you safe",
                 subtitle: "stopping suddenly can be hard on your body. this helps andi know if you should talk to a doctor first. there are no wrong answers."
             )
 
-            VStack(spacing: 16) {
-                Stepper(value: $drinksPerDay, in: 0...40) {
-                    Text(drinksPerDay == 1 ? "about 1 drink a day" : "about \(drinksPerDay) drinks a day")
-                }
-                Divider()
-                Toggle("i drink most days or every day", isOn: $drinksDaily)
-                Divider()
-                Toggle("i sometimes need a drink in the morning", isOn: $morningDrinking)
-                Divider()
-                Toggle("i've had shakes, sweats, or seizures when i stopped before", isOn: $pastWithdrawal)
+            DrinkCounter(value: $drinksPerDay)
+
+            VStack(spacing: 10) {
+                Text("tap any that are true").andiLabel()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                OptionRow(title: "i drink most days or every day", selected: drinksDaily) { drinksDaily.toggle() }
+                OptionRow(title: "i sometimes need a drink in the morning", selected: morningDrinking) { morningDrinking.toggle() }
+                OptionRow(title: "i've had shakes, sweats, or seizures when i stopped before", selected: pastWithdrawal) { pastWithdrawal.toggle() }
             }
-            .andiCard()
         }
     }
 
     private var person: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: 24) {
             StepHeader(
-                title: "your person",
+                title: "who's your person?",
                 subtitle: "someone you trust: a sponsor, friend, or family member. andi can reach out to them when you want it to. you can skip this."
             )
             FieldGroup(label: "their name") {
                 TextField("name", text: $personName)
+                    .font(.title3)
                     .nameInput()
                     .focused($focus, equals: .personName)
                     .submitLabel(.next)
@@ -177,6 +180,7 @@ struct OnboardingView: View {
             }
             FieldGroup(label: "their phone") {
                 TextField("phone", text: $personPhone)
+                    .font(.title3)
                     .phoneInput()
                     .focused($focus, equals: .personPhone)
             }
@@ -184,37 +188,37 @@ struct OnboardingView: View {
     }
 
     private var share: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: 24) {
             StepHeader(title: "what andi can use", subtitle: "you're in charge. change any of this later in settings.")
 
-            VStack(spacing: 16) {
-                Toggle("notice when i'm near places i mark as risky", isOn: $consents.location)
-                Divider()
-                Toggle("notice drink purchases", isOn: $consents.purchases)
-                Divider()
-                Toggle("let my person know when things look hard", isOn: $consents.sponsorAlerts)
+            VStack(spacing: 10) {
+                Text("andi can").andiLabel()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                OptionRow(title: "notice when i'm near places i mark as risky", selected: consents.location) { consents.location.toggle() }
+                OptionRow(title: "notice drink purchases", selected: consents.purchases) { consents.purchases.toggle() }
+                OptionRow(title: "let my person know when things look hard", selected: consents.sponsorAlerts) { consents.sponsorAlerts.toggle() }
             }
-            .andiCard()
 
-            FieldGroup(label: "what your person can see") {
-                Picker("what your person can see", selection: $consents.shareWithSponsor) {
-                    ForEach(ShareLevel.allCases, id: \.self) { level in
-                        Text(level.uiLabel).tag(level)
+            VStack(spacing: 10) {
+                Text("what your person can see").andiLabel()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                ForEach(ShareLevel.allCases, id: \.self) { level in
+                    OptionRow(title: level.uiLabel, selected: consents.shareWithSponsor == level) {
+                        consents.shareWithSponsor = level
                     }
                 }
-                .labelsHidden()
-                .pickerStyle(.menu)
             }
         }
     }
 
     private var whyStep: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: 24) {
             StepHeader(
-                title: "your why",
+                title: "what's your why?",
                 subtitle: "what are you doing this for? andi will remind you on the hard days. optional."
             )
             TextField("for my kids, for my mornings, for me…", text: $why, axis: .vertical)
+                .font(.title3)
                 .lineLimit(4...8)
                 .focused($focus, equals: .why)
                 .andiCard()
@@ -233,36 +237,32 @@ struct OnboardingView: View {
                     .frame(maxWidth: .infinity)
             }
 
-            HStack(spacing: 12) {
-                if step != .welcome {
-                    Button("back") { go(to: step.rawValue - 1) }
-                        .buttonStyle(.andiSecondary)
-                        .disabled(model.isBusy)
+            Button {
+                next()
+            } label: {
+                if model.isBusy {
+                    ProgressView().tint(Theme.onPrimary)
+                } else {
+                    Text(primaryTitle)
                 }
-                Button {
-                    next()
-                } label: {
-                    if model.isBusy {
-                        ProgressView().tint(Theme.onAccent)
-                    } else {
-                        Text(primaryTitle)
-                    }
-                }
-                .buttonStyle(.andiPrimary)
-                .disabled(model.isBusy)
             }
+            .buttonStyle(.andiPrimary)
+            .disabled(model.isBusy)
         }
         .padding(.horizontal, Theme.gutter)
-        .padding(.vertical, 16)
-        .background(Theme.background)
+        .padding(.top, 12)
+        .padding(.bottom, 8)
+    }
+
+    private var currencySymbol: String {
+        Locale.current.currencySymbol ?? "$"
     }
 
     private var primaryTitle: String {
         switch step {
-        case .welcome: "let's start"
-        case .person: (personName.andiTrimmed.isEmpty && personPhone.andiTrimmed.isEmpty) ? "skip for now" : "next"
-        case .why: "finish"
-        default: "next"
+        case .person: (personName.andiTrimmed.isEmpty && personPhone.andiTrimmed.isEmpty) ? "skip for now" : "continue"
+        case .why: why.andiTrimmed.isEmpty ? "skip and finish" : "finish"
+        default: "continue"
         }
     }
 
@@ -292,7 +292,6 @@ struct OnboardingView: View {
         switch step {
         case .basics:
             if name.andiTrimmed.isEmpty { return "what should andi call you?" }
-            if PhoneNumber.normalize(phone) == nil { return "that phone number doesn't look right. include the area code." }
             if Calendar.current.startOfDay(for: soberSince) > Calendar.current.startOfDay(for: .now) {
                 return "pick today or a day before."
             }
@@ -310,7 +309,7 @@ struct OnboardingView: View {
             guard let theirs = PhoneNumber.normalize(personPhone) else {
                 return hasPhoneText ? "their phone number doesn't look right. include the area code." : "add their phone too, or clear both to skip."
             }
-            if theirs == PhoneNumber.normalize(phone) { return "your person needs a different number from yours." }
+            if theirs == model.signInPhone { return "your person needs a different number from yours." }
         default:
             break
         }
@@ -343,7 +342,7 @@ struct OnboardingView: View {
 
         let request = OnboardRequest(
             name: name.andiTrimmed,
-            phone: PhoneNumber.normalize(phone) ?? phone.andiTrimmed,
+            phone: model.signInPhone, // the model sends the sign-in instead when it has one
             soberSince: Self.dayFormatter.string(from: soberSince),
             weeklyDrinkSpend: parsedSpend ?? 0,
             screening: Screening(
@@ -364,25 +363,212 @@ struct OnboardingView: View {
     }
 }
 
-// MARK: - Linking (account made, waiting for the first iMessage)
+// MARK: - Sign in (the first screen)
+
+/// Phone number, then "text andi". The server answers the same way for every number; Andi's reply
+/// to the text (and this screen moving on) is the only place an existing account shows.
+struct SignInView: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.openURL) private var openURL
+    @State private var phone = ""
+    @State private var validationMessage: String?
+    @State private var showServer = false
+    @FocusState private var phoneFocused: Bool
+
+    var body: some View {
+        ZStack {
+            AndiGlow(anchor: model.signIn == nil ? 0.05 : 0.18)
+
+            VStack(spacing: 0) {
+                topBar
+                    .padding(.horizontal, Theme.gutter)
+                    .padding(.top, 8)
+
+                ScrollView {
+                    Group {
+                        if let signIn = model.signIn {
+                            textAndi(signIn)
+                        } else {
+                            enterNumber
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, Theme.gutter)
+                    .padding(.bottom, Theme.gutter)
+                    .transition(.opacity)
+                }
+                .scrollDismissesKeyboard(.interactively)
+
+                footer
+            }
+        }
+        .animation(.easeInOut(duration: 0.3), value: model.signIn)
+        .keyboardDoneButton { phoneFocused = false }
+        .sheet(isPresented: $showServer) {
+            ServerSheet().environment(model)
+        }
+    }
+
+    private var topBar: some View {
+        ZStack {
+            AndiWordmark()
+            HStack {
+                if model.signIn != nil {
+                    CircleIconButton(symbol: "chevron.left", label: "use a different number") { model.cancelSignIn() }
+                }
+                Spacer()
+                #if DEBUG
+                if model.signIn == nil {
+                    CircleIconButton(symbol: "server.rack", label: "server: \(model.baseURL.host() ?? model.baseURL.absoluteString)") {
+                        showServer = true
+                    }
+                    .opacity(0.6)
+                    .accessibilityHint("developer setting: change which server andi uses")
+                }
+                #endif
+            }
+        }
+        .frame(height: 44)
+    }
+
+    private var enterNumber: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("hi, i'm andi.")
+                .font(Theme.largeTitle)
+                .padding(.top, 56)
+            Text("i live in your messages. text me any time, day or night: when it's hard, when it's good, or when you just need someone.")
+                .font(Theme.body)
+                .foregroundStyle(Theme.muted)
+                .fixedSize(horizontal: false, vertical: true)
+
+            VStack(alignment: .leading, spacing: 10) {
+                Text("your number").andiLabel()
+                TextField("(555) 555-0123", text: $phone)
+                    .font(.system(.title, design: .default).weight(.medium))
+                    .monospacedDigit()
+                    .phoneInput()
+                    .focused($phoneFocused)
+                    .submitLabel(.continue)
+                    .onSubmit(submit)
+                    .padding(.vertical, 4)
+                    .andiCard()
+                Label("new or coming back, start here. andi texts you to check it's yours, and never shares your number.", systemImage: "lock.fill")
+                    .font(Theme.caption)
+                    .foregroundStyle(Theme.muted)
+                    .labelStyle(TopAlignedLabelStyle())
+            }
+            .padding(.top, 28)
+        }
+    }
+
+    private func textAndi(_ signIn: SignInStart) -> some View {
+        VStack(spacing: 22) {
+            GlowIcon(symbol: "message.fill")
+                .padding(.top, 36)
+
+            VStack(spacing: 10) {
+                Text("text andi to continue")
+                    .font(Theme.screenTitle)
+                Text("hit send on the message below. andi texts you back, and that's how andi knows this number is yours.")
+                    .font(Theme.body)
+                    .foregroundStyle(Theme.muted)
+            }
+            .multilineTextAlignment(.center)
+            .fixedSize(horizontal: false, vertical: true)
+
+            MessagePreview(to: signIn.agentHandle, text: "\(signIn.firstText) \(signIn.linkCode)")
+
+            if model.signInSMSURL() == nil {
+                ErrorBanner(message: "andi's number isn't set up on this server yet. you can skip this and text andi later.") {
+                    model.cancelSignIn()
+                }
+            }
+
+            WaitingIndicator(text: "waiting for your text…")
+
+            if let error = model.lastError {
+                Text(error)
+                    .font(Theme.caption)
+                    .foregroundStyle(Theme.riskElevated)
+                    .multilineTextAlignment(.center)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .task(id: signIn.signInToken) { await model.pollSignIn() }
+    }
+
+    @ViewBuilder private var footer: some View {
+        VStack(spacing: 14) {
+            if model.signIn != nil {
+                if let url = model.signInSMSURL() {
+                    Button {
+                        openURL(url)
+                    } label: {
+                        Label("open messages", systemImage: "arrow.up.message.fill")
+                    }
+                    .buttonStyle(.andiPrimary)
+                }
+                Button("new here? skip for now and text later") { model.skipSignIn() }
+                    .font(Theme.caption.weight(.medium))
+                    .foregroundStyle(Theme.text)
+            } else {
+                if let message = validationMessage ?? model.lastError {
+                    Text(message)
+                        .font(Theme.caption)
+                        .foregroundStyle(Theme.riskElevated)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: .infinity)
+                }
+                Button {
+                    submit()
+                } label: {
+                    if model.isBusy {
+                        ProgressView().tint(Theme.onPrimary)
+                    } else {
+                        Text("continue")
+                    }
+                }
+                .buttonStyle(.andiPrimary)
+                .disabled(model.isBusy || phone.andiTrimmed.isEmpty)
+            }
+            CrisisFooter()
+        }
+        .padding(.horizontal, Theme.gutter)
+        .padding(.top, 12)
+        .padding(.bottom, 8)
+    }
+
+    private func submit() {
+        phoneFocused = false
+        validationMessage = nil
+        guard PhoneNumber.normalize(phone) != nil else {
+            validationMessage = "that phone number doesn't look right. include the area code."
+            return
+        }
+        Task { _ = await model.startSignIn(phone: phone) }
+    }
+}
+
+// MARK: - Linking (account made; text andi now or later)
 
 struct LinkingView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.openURL) private var openURL
-    @State private var acknowledgedSafety = false
-    @State private var confirmStartOver = false
 
     var body: some View {
-        Group {
-            if let screening = model.onboardResult?.screening, screening.medicalFirst, !acknowledgedSafety {
+        ZStack {
+            AndiGlow(anchor: 0.15)
+            if model.needsMedicalAck, let screening = model.onboardResult?.screening {
                 MedicalFirstView(message: screening.message) {
-                    withAnimation { acknowledgedSafety = true }
+                    withAnimation {
+                        model.needsMedicalAck = false
+                        if model.me?.imessageLinked == true { model.finishLinking() }
+                    }
                 }
             } else {
                 linking
             }
         }
-        .background(Theme.background.ignoresSafeArea())
     }
 
     private var agentHandle: String? { model.onboardResult?.agentHandle ?? model.me?.agentHandle }
@@ -390,77 +576,76 @@ struct LinkingView: View {
     private var linkCode: String? { model.me?.linkCode ?? model.onboardResult?.linkCode }
 
     private var linking: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
-                Image(systemName: "message.fill")
-                    .font(.largeTitle)
-                    .foregroundStyle(Theme.accent)
-                    .padding(.top, 40)
-                    .accessibilityHidden(true)
+        VStack(spacing: 0) {
+            ScrollView {
+                VStack(spacing: 22) {
+                    GlowIcon(symbol: "message.fill")
+                        .padding(.top, 60)
 
-                StepHeader(
-                    title: "text andi to finish",
-                    subtitle: "send the first message and andi takes it from there. texting also confirms this is your number."
-                )
+                    VStack(spacing: 10) {
+                        Text("last step: text andi")
+                            .font(Theme.screenTitle)
+                        Text("send one text so andi can be in your messages. it also confirms this is your number.")
+                            .font(Theme.body)
+                            .foregroundStyle(Theme.muted)
+                    }
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
 
+                    if let linkCode {
+                        MessagePreview(to: agentHandle, text: "hi andi \(linkCode)")
+                    }
+
+                    if model.smsURL() == nil {
+                        ErrorBanner(message: "andi's number isn't set up on this server yet. once it is, you'll be able to text andi from here.") {
+                            Task { await model.refresh() }
+                        }
+                    }
+
+                    WaitingIndicator(text: "waiting for your text…")
+
+                    if let error = model.lastError {
+                        ErrorBanner(message: error) { Task { await model.refresh() } }
+                    }
+
+                    if let voiceNumber {
+                        Text("andi can also call from \(PhoneNumber.display(voiceNumber)). save andi to your contacts later so you know it's them.")
+                            .font(Theme.caption)
+                            .foregroundStyle(Theme.muted)
+                            .multilineTextAlignment(.center)
+                    }
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, Theme.gutter)
+                .padding(.bottom, Theme.gutter)
+            }
+
+            VStack(spacing: 14) {
                 if let url = model.smsURL() {
                     Button {
                         openURL(url)
                     } label: {
-                        Label("text andi", systemImage: "paperplane.fill")
+                        Label("open messages", systemImage: "arrow.up.message.fill")
                     }
                     .buttonStyle(.andiPrimary)
-                } else {
-                    ErrorBanner(message: "andi's number isn't set up on this server yet. once it is, you'll be able to text andi from here.") {
-                        Task { await model.refresh() }
-                    }
                 }
-
-                VStack(alignment: .leading, spacing: 12) {
-                    if let agentHandle {
-                        InfoRow(label: "andi's number", value: agentHandle)
-                    }
-                    if let linkCode {
-                        InfoRow(label: "your code", value: linkCode, monospaced: true)
-                    }
-                }
-                .andiCard()
-
-                HStack(spacing: 10) {
-                    ProgressView()
-                    Text("waiting for your text…")
-                        .font(Theme.caption)
-                        .foregroundStyle(Theme.muted)
-                }
-                .accessibilityElement(children: .combine)
-
-                if let error = model.lastError {
-                    ErrorBanner(message: error) { Task { await model.refresh() } }
-                }
-
-                if let voiceNumber {
-                    Text("andi can also call from \(voiceNumber). save andi to your contacts later so you know it's them.")
-                        .font(Theme.caption)
-                        .foregroundStyle(Theme.muted)
-                }
-
-                Button("start over") { confirmStartOver = true }
-                    .font(Theme.caption)
-                    .foregroundStyle(Theme.muted)
-                    .padding(.top, 8)
-
+                Button("i'll do this later") { model.finishLinking() }
+                    .font(Theme.caption.weight(.medium))
+                    .foregroundStyle(Theme.text)
+                    .accessibilityHint("you'll find this on your home screen and in settings until you do.")
                 CrisisFooter()
-                    .padding(.top, 8)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(Theme.gutter)
+            .padding(.horizontal, Theme.gutter)
+            .padding(.top, 12)
+            .padding(.bottom, 8)
         }
-        .task { await model.pollUntilLinked() }
-        .confirmationDialog("start over?", isPresented: $confirmStartOver, titleVisibility: .visible) {
-            Button("start over", role: .destructive) { model.signOut() }
-            Button("keep going", role: .cancel) {}
-        } message: {
-            Text("you'll set things up again from the beginning.")
+        .task {
+            // Verified on the sign-in screen: nothing to text.
+            if model.me?.imessageLinked == true {
+                model.finishLinking()
+                return
+            }
+            await model.pollUntilLinked()
         }
     }
 }
@@ -472,69 +657,58 @@ private struct MedicalFirstView: View {
     let onContinue: () -> Void
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
-                Image(systemName: "heart.text.square.fill")
-                    .font(.largeTitle)
-                    .foregroundStyle(Theme.riskElevated)
-                    .padding(.top, 40)
-                    .accessibilityHidden(true)
+        VStack(spacing: 0) {
+            ScrollView {
+                VStack(spacing: 22) {
+                    GlowIcon(symbol: "heart.text.square.fill", color: Theme.riskElevated)
+                        .padding(.top, 60)
 
-                Text("one thing first")
-                    .font(Theme.largeTitle)
+                    Text("one thing first")
+                        .font(Theme.screenTitle)
 
-                Text(message)
-                    .font(.title3)
-                    .andiCard()
+                    Text(message)
+                        .font(.title3)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .andiCard()
 
+                    Text("SAMHSA is confidential and can help you find a doctor or a safe place to stop.")
+                        .font(Theme.caption)
+                        .foregroundStyle(Theme.muted)
+                        .multilineTextAlignment(.center)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, Theme.gutter)
+            }
+
+            VStack(spacing: 12) {
                 if let samhsa = CrisisLine.samhsa {
                     Link(destination: samhsa) {
                         Label("call SAMHSA (free, 24/7)", systemImage: "phone.fill")
                     }
-                    .buttonStyle(.andiPrimary)
+                    .buttonStyle(.andiUrgent)
                     .accessibilityHint("calls 1-800-662-4357")
                 }
-
-                Text("they're confidential and can help you find a doctor or a safe place to stop.")
-                    .font(Theme.caption)
-                    .foregroundStyle(Theme.muted)
-
                 Button("i understand, continue", action: onContinue)
                     .buttonStyle(.andiSecondary)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(Theme.gutter)
+            .padding(.horizontal, Theme.gutter)
+            .padding(.top, 12)
+            .padding(.bottom, 8)
         }
     }
 }
 
 // MARK: - Small building blocks
 
-private struct ProgressDots: View {
-    let count: Int
-    let current: Int
-
-    var body: some View {
-        HStack(spacing: 8) {
-            ForEach(0..<count, id: \.self) { index in
-                Capsule()
-                    .fill(index <= current ? Theme.accent : Theme.cardRaised)
-                    .frame(width: index == current ? 20 : 8, height: 8)
-            }
-        }
-        .animation(.easeInOut(duration: 0.25), value: current)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("step \(current + 1) of \(count)")
-    }
-}
-
 private struct StepHeader: View {
     let title: String
     let subtitle: String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(title).font(Theme.title)
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title)
+                .font(Theme.screenTitle)
+                .accessibilityAddTraits(.isHeader)
             Text(subtitle)
                 .font(Theme.body)
                 .foregroundStyle(Theme.muted)
@@ -549,10 +723,8 @@ private struct FieldGroup<Content: View>: View {
     @ViewBuilder let content: Content
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(label)
-                .font(Theme.caption.weight(.medium))
-                .foregroundStyle(Theme.muted)
+        VStack(alignment: .leading, spacing: 10) {
+            Text(label).andiLabel()
             content
                 .textFieldStyle(.plain)
                 .andiCard()
@@ -565,24 +737,79 @@ private struct FieldGroup<Content: View>: View {
     }
 }
 
-private struct InfoRow: View {
-    let label: String
-    let value: String
-    var monospaced = false
+/// One big number with minus/plus, like a dial. Drinks on a typical day.
+private struct DrinkCounter: View {
+    @Binding var value: Int
+    private let range = 0...40
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(label)
+        VStack(spacing: 6) {
+            Text("\(value)\(value == range.upperBound ? "+" : "")")
+                .font(.system(size: 76, weight: .thin))
+                .monospacedDigit()
+                .contentTransition(.numericText(value: Double(value)))
+            Text(value == 1 ? "drink on a typical day" : "drinks on a typical day")
                 .font(Theme.caption)
                 .foregroundStyle(Theme.muted)
-            Text(value)
-                .font(monospaced ? Font.title3.monospaced() : Font.title3)
-                .textSelection(.enabled)
+
+            HStack(spacing: 14) {
+                CircleIconButton(symbol: "minus", label: "fewer") { change(-1) }
+                    .disabled(value <= range.lowerBound)
+                Slider(
+                    value: Binding(get: { Double(value) }, set: { value = Int($0.rounded()) }),
+                    in: Double(range.lowerBound)...Double(range.upperBound),
+                    step: 1
+                )
+                .tint(Theme.text)
+                .accessibilityHidden(true) // the whole counter is one adjustable control below
+                CircleIconButton(symbol: "plus", label: "more") { change(1) }
+                    .disabled(value >= range.upperBound)
+            }
+            .padding(.top, 10)
+        }
+        .frame(maxWidth: .infinity)
+        .andiCard(padding: 20)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("drinks on a typical day")
+        .accessibilityValue("\(value)")
+        .accessibilityAdjustableAction { direction in
+            switch direction {
+            case .increment: change(1)
+            case .decrement: change(-1)
+            @unknown default: break
+            }
+        }
+        .andiHaptic(.light, trigger: value)
+    }
+
+    private func change(_ delta: Int) {
+        withAnimation(.snappy) { value = min(max(value + delta, range.lowerBound), range.upperBound) }
+    }
+}
+
+/// Icon aligned with the first line of a multi-line label.
+private struct TopAlignedLabelStyle: LabelStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            configuration.icon.font(.caption2)
+            configuration.title.fixedSize(horizontal: false, vertical: true)
         }
     }
 }
 
 // MARK: - Previews
+
+#Preview("sign in") {
+    SignInView()
+        .environment(AppModel.preview(.signIn, me: nil))
+        .preferredColorScheme(.dark)
+}
+
+#Preview("sign in: text andi") {
+    SignInView()
+        .environment(AppModel.preview(.signIn, me: nil, signIn: MockData.signInStart))
+        .preferredColorScheme(.dark)
+}
 
 #Preview("onboarding") {
     OnboardingView()

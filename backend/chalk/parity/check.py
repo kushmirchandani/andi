@@ -1,4 +1,4 @@
-"""Parity check: the Chalk resolver (chalk/features.py) must score exactly like src/risk/score.ts.
+"""Parity check: the Chalk resolvers (chalk/features.py) must match src/risk/score.ts and src/risk/patterns.ts.
 
     npm run parity        (generates cases with tsx, then runs this file)
 
@@ -13,7 +13,8 @@ sys.path.insert(0, os.path.join(here, "stub"))
 sys.path.insert(0, os.path.dirname(here))
 import features as F  # noqa: E402
 
-cases = json.load(sys.stdin)
+data = json.load(sys.stdin)
+cases = data["risk"]
 bad = 0
 for c in cases:
     s = c["s"]
@@ -28,5 +29,15 @@ for c in cases:
         bad += 1
         if bad <= 5:
             print("MISMATCH", s, "python:", py, "ts:", ts)
-print(f"chalk parity: {len(cases) - bad}/{len(cases)} cases match")
-sys.exit(1 if bad else 0)
+print(f"chalk parity (risk): {len(cases) - bad}/{len(cases)} cases match")
+
+pbad = 0
+for c in data["patterns"]:
+    i = c["i"]
+    py = list(F.summarize_patterns(i["historyDays"], i["hardMoments"], i["halt"], i["placeEnters"], i["interventions"]))
+    if py != c["r"]:
+        pbad += 1
+        if pbad <= 5:
+            print("MISMATCH patterns", i, "python:", py, "ts:", c["r"])
+print(f"chalk parity (patterns): {len(data['patterns']) - pbad}/{len(data['patterns'])} cases match")
+sys.exit(1 if bad or pbad else 0)

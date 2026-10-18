@@ -2,18 +2,20 @@
 // evaluate(), which asks Chalk for the risk level and then updates the chip, the sponsor's
 // status, and (on high risk, with consent) alerts the sponsor.
 
-import { getRisk } from "../chalk/client.js";
+import { getPatterns, getRisk } from "../chalk/client.js";
 import { chipHub, type ChipGlow, type ChipMode } from "../chip/hub.js";
 import { clock } from "../clock.js";
 import { config } from "../config.js";
 import { log } from "../log.js";
 import { moneySaved } from "../nessie/client.js";
 import { buildSignals, localClock } from "../risk/signals.js";
+import { localParts, nudgeText, patternInputs, type RiskyWindow } from "../risk/patterns.js";
 import { daysSober, nowIso, store, withLock } from "../store.js";
-import type { CheckIn, Person, RiskLevel } from "../types.js";
+import type { CheckIn, LearnedPatterns, Person, QuietHours, RiskLevel } from "../types.js";
 import { maybeAlertSponsor, updateSponsorStatus } from "./sponsor.js";
 import { textPerson } from "./targets.js";
-import { releasePersonLines } from "./lines.js";
+import { sendMilestoneCard, sendVoiceNote } from "./rich.js";
+import { releasePersonLines, releaseSignInLine } from "./lines.js";
 
 const GLOW: Record<RiskLevel, ChipGlow> = { low: "steady", elevated: "warm", high: "alert" };
 export const MILESTONES = [1, 3, 7, 14, 30, 60, 90, 180, 365];
@@ -31,6 +33,7 @@ export function saved(p: Person) {
 }
 
 export function pushChip(p: Person, mode: ChipMode = "idle", line?: string) {
+  if (!config.features.chip) return; // paused: nothing to light up
   chipHub.push(p.id, {
     type: "state",
     day: daysSober(p),
@@ -47,10 +50,16 @@ chipHub.onChipConnect((personId) => {
   if (p) pushChip(p);
 });
 
-export function inQuietHours(now = clock.now(), timezone?: string) {
+// The person's own quiet hours from the app, or the server default.
+export function quietHoursFor(p?: Pick<Person, "quietHours">): QuietHours {
+  return p?.quietHours ?? { enabled: true, start: config.quietStartHour, end: config.quietEndHour };
+}
+
+export function inQuietHours(now = clock.now(), timezone?: string, quiet = quietHoursFor()) {
+  if (!quiet.enabled || quiet.start === quiet.end) return false;
   const { hour } = localClock(now, timezone);
-  const { quietStartHour: s, quietEndHour: e } = config;
-  return s <= e ? hour >= s && hour < e : hour >= s || hour < e;
+  const { start: s, end: e } = quiet;
+  return s < e ? hour >= s && hour < e : hour >= s || hour < e;
 }
 
 export function evaluate(personId: string, trigger: string) {
@@ -73,11 +82,62 @@ export function evaluate(personId: string, trigger: string) {
   });
 }
 
-function markOutreach(p: Person) {
+function markOutreach(p: Person, detail?: string) {
   store.update(p.id, (x) => {
     x.lastOutreachAt = nowIso();
   });
-  store.log(p.id, { kind: "outreach" });
+  store.log(p.id, { kind: "outreach", detail });
+}
+
+// MARK: "Andi learns you"
+
+const PATTERN_REFRESH_MS = 6 * 3600_000; // patterns move slowly
+const PATTERN_LEAD_MIN = 20; // nudge 20-60 minutes before their usual hard stretch
+const PATTERN_LEAD_MAX = 60;
+const PATTERN_NUDGE_GAP_MS = 20 * 3600_000; // at most one pattern nudge a day
+
+/** Re-learns a person's patterns from their history (Chalk when available, else locally). */
+export async function refreshPatterns(personId: string, force = false): Promise<LearnedPatterns | undefined> {
+  const p = store.get(personId);
+  if (!p) return undefined;
+  if (!force && p.patterns && clock.now().getTime() - new Date(p.patterns.at).getTime() < PATTERN_REFRESH_MS) return p.patterns;
+  const summary = await getPatterns(p.id, patternInputs(p));
+  const learned: LearnedPatterns = { ...summary, at: nowIso() };
+  store.update(p.id, (x) => {
+    x.patterns = learned;
+  });
+  return learned;
+}
+
+/** Minutes from now until the next start of the window, in the person's time zone. */
+export function minutesUntilWindow(now: Date, timezone: string | undefined, w: RiskyWindow) {
+  const l = localParts(now, timezone);
+  const nowMin = l.hour * 60 + l.minute;
+  const startMin = w.startHour * 60;
+  if (w.weekday === null) {
+    const d = startMin - nowMin;
+    return d < 0 ? d + 1440 : d;
+  }
+  const d = ((w.weekday - l.weekday + 7) % 7) * 1440 + startMin - nowMin;
+  return d < 0 ? d + 7 * 1440 : d;
+}
+
+// One warm, specific text before their usual hard stretch: "it's almost friday night. last time
+// it got hard, the walk helped. want to plan one?" Same limits as every proactive text (quiet
+// hours, the 3-hour gap, stop after two unanswered), plus once a day.
+async function maybePatternNudge(p: Person) {
+  const s = p.patterns;
+  if (!s?.ready || !s.riskyWindow || !p.photon.spaceId) return;
+  if (p.lastPatternNudgeAt && clock.now().getTime() - new Date(p.lastPatternNudgeAt).getTime() < PATTERN_NUDGE_GAP_MS) return;
+  const until = minutesUntilWindow(clock.now(), p.timezone, s.riskyWindow);
+  if (until < PATTERN_LEAD_MIN || until > PATTERN_LEAD_MAX) return;
+  const sinceOutreach = p.lastOutreachAt ? clock.now().getTime() - new Date(p.lastOutreachAt).getTime() : Infinity;
+  if (sinceOutreach <= NUDGE_GAP_MS || unansweredNudges(p) >= MAX_UNANSWERED_NUDGES) return;
+  await textPerson(p, nudgeText(s, p.sponsor?.name));
+  store.update(p.id, (x) => {
+    x.lastPatternNudgeAt = nowIso();
+  });
+  markOutreach(p, "pattern");
 }
 
 // "Do you want to be here?" (the A-CHESS mechanic), triggered by an iOS geofence or Find My.
@@ -114,10 +174,12 @@ export async function onPlaceExit(personId: string, placeId: string) {
   return evaluate(p.id, "place_exit");
 }
 
-export async function onAlcoholPurchase(personId: string, merchant: string, amount: number) {
+// txId: the Nessie transaction, when there is one. A purchase already seen is ignored (returns null).
+export async function onAlcoholPurchase(personId: string, merchant: string, amount: number, txId?: string) {
   const p = store.must(personId);
   if (!p.consents.purchases) return null;
-  const purchase = { at: nowIso(), merchant, amount };
+  if (txId && p.purchases.some((x) => x.txId === txId)) return null;
+  const purchase = { at: nowIso(), merchant, amount, ...(txId ? { txId } : {}) };
   store.update(p.id, (x) => {
     x.lastAlcoholPurchase = purchase;
     x.purchases.push(purchase);
@@ -166,6 +228,9 @@ export async function startBreathing(personId: string, from: "chip" | "imessage"
     }, BREATHE_MS).unref(),
   );
   if (from === "chip" || from === "app") await textPerson(p, "breathing with you. in for 4, hold for 4, out for 6. the urge will pass.");
+  // Without the chip, a round started from iMessage or a call points to the app's breathing screen.
+  if (!config.features.chip && from === "voice")
+    await textPerson(p, "breathe along with me: in for 4, hold for 4, out for 6. tap breathe in the andi app (or its widget, or your action button) to follow the circle.");
 }
 
 export async function onSlip(personId: string, note?: string) {
@@ -187,6 +252,7 @@ function unansweredNudges(p: Person) {
 const PENDING_TTL_MS = 48 * 3600_000;
 
 // Signups that never texted Andi within 48 hours are removed, and their Photon seats freed.
+// Sign-ins that never finished (no text, or verified but never onboarded) go the same way.
 async function expirePending() {
   const now = clock.now().getTime();
   for (const p of store.all()) {
@@ -195,6 +261,11 @@ async function expirePending() {
     log.info("tick", `expired pending signup ${p.id}`);
     await releasePersonLines(p);
   }
+  for (const s of store.signIns()) {
+    if (now - new Date(s.createdAt).getTime() < PENDING_TTL_MS) continue;
+    store.removeSignIn(s.id);
+    await releaseSignInLine(s);
+  }
 }
 
 export async function tick() {
@@ -202,19 +273,25 @@ export async function tick() {
   for (const p of store.all()) {
     try {
       const risk = await evaluate(p.id, "tick");
+      await refreshPatterns(p.id).catch((err) => log.warn("tick", `patterns for ${p.id}`, err));
       const fresh = store.get(p.id);
-      if (!fresh || inQuietHours(clock.now(), fresh.timezone)) continue;
+      if (!fresh || inQuietHours(clock.now(), fresh.timezone, quietHoursFor(fresh))) continue;
       const sinceOutreach = fresh.lastOutreachAt ? clock.now().getTime() - new Date(fresh.lastOutreachAt).getTime() : Infinity;
       if (risk.level !== "low" && sinceOutreach > NUDGE_GAP_MS && unansweredNudges(fresh) < MAX_UNANSWERED_NUDGES) {
         await textPerson(fresh, "thinking of you tonight. how are you doing, honestly?");
         markOutreach(fresh);
       }
+      await maybePatternNudge(store.must(p.id));
       const day = daysSober(fresh);
       const already = fresh.events.some((e) => e.kind === "milestone" && e.detail === String(day));
       if (MILESTONES.includes(day) && !already) {
         store.log(fresh.id, { kind: "milestone", detail: String(day) });
         pushChip(fresh, "milestone", `${day} days`);
-        await textPerson(fresh, `day ${day}. ${day === 1 ? "one morning" : `${day} mornings`} you remember. i'm really proud of you.`);
+        const words = `day ${day}. ${day === 1 ? "one morning" : `${day} mornings`} you remember. i'm really proud of you.`;
+        await textPerson(fresh, words);
+        // The card and a voice note make the day feel like an occasion; the text above stands alone.
+        await sendMilestoneCard(store.must(fresh.id), day);
+        await sendVoiceNote(store.must(fresh.id), `${fresh.name.toLowerCase()}, ${words}`, `milestone ${day}`);
       }
     } catch (err) {
       log.error("tick", `person ${p.id}`, err);

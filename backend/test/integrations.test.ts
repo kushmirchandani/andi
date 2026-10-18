@@ -112,34 +112,135 @@ test("chalk: failure falls back to the local score and opens the breaker", async
   assert.equal(calls.length, before, "breaker skips Chalk while open");
 });
 
-test("nessie: create ids come from objectCreated, or from a lookup when the API returns a string", async () => {
+test("nessie v2: bearer auth, cents, and ids straight from the response", async () => {
   const { nessie } = await import("../src/nessie/client.js");
-  responder = (c) => (c.method === "POST" ? json({ code: 201, objectCreated: { _id: "cust_1" } }, 201) : json([]));
-  assert.equal(await nessie.createCustomer("Maya"), "cust_1");
-  assert.match(calls[0].url, /^https:\/\/api\.nessieisreal\.com\/customers\?key=nkey$/);
-
-  calls = [];
-  responder = (c) =>
-    c.method === "POST" ? json("Account created", 201) : json([{ _id: "acct_old", nickname: "Old" }, { _id: "acct_9", nickname: "Everyday" }]);
-  assert.equal(await nessie.createAccount("cust_1"), "acct_9");
-  assert.equal(calls[1].url, "https://api.nessieisreal.com/customers/cust_1/accounts?key=nkey");
+  responder = (c) => (c.url.endsWith("/customers") ? json({ id: "cus_1" }) : json({ id: "acct_9" }));
+  assert.equal(await nessie.createCustomer("Maya"), "cus_1");
+  assert.equal(calls[0].url, "https://v2-prod-api.nessieisreal.com/customers");
+  assert.equal(calls[0].headers.authorization, "Bearer nkey");
+  assert.equal(await nessie.createAccount("cus_1"), "acct_9");
+  assert.equal(calls[1].url, "https://v2-prod-api.nessieisreal.com/customers/cus_1/accounts");
+  assert.deepEqual(calls[1].body, { type: "Checking", nickname: "Everyday", balance_cents: 250000 });
 });
 
-test("nessie: merchants are reused by name; purchases send the required fields", async () => {
+test("nessie v2: merchants are reused by name; purchases send integer cents", async () => {
   const { nessie, isAlcoholSeller } = await import("../src/nessie/client.js");
-  responder = (c) => (c.url.includes("/merchants") ? json([{ _id: "m_1", name: "Square Wine & Spirits", category: "liquor store" }]) : json("Created purchase", 201));
+  responder = (c) =>
+    c.url.includes("/merchants")
+      ? json({ items: [{ id: "mer_1", name: "Square Wine & Spirits", category: "liquor store" }], next_cursor: "" })
+      : json({ id: "txn_1", kind: "purchase", status: "pending", amount_cents: 3450, merchant_id: "mer_1" });
   const id = await nessie.getOrCreateMerchant("Square Wine & Spirits", "liquor store");
-  assert.equal(id, "m_1");
+  assert.equal(id, "mer_1");
   assert.equal(calls.filter((c) => c.method === "POST").length, 0);
-  const p = await nessie.createPurchase("acct_9", "m_1", 34, "demo");
-  assert.equal(p.merchant_id, "m_1");
-  const post = calls.at(-1)!;
-  assert.deepEqual(Object.keys(post.body).sort(), ["amount", "description", "medium", "merchant_id", "purchase_date"]);
+  const tx = await nessie.createPurchase("acct_9", "mer_1", 34.5, "demo");
+  assert.equal(tx.id, "txn_1");
+  assert.deepEqual(calls.at(-1)!.body, { merchant_id: "mer_1", amount_cents: 3450, description: "demo" });
   assert.equal(isAlcoholSeller({ name: "Square Wine & Spirits", category: "liquor store" }), true);
-  assert.equal(isAlcoholSeller({ name: "Tatte Bakery", category: ["food"] }), false);
+  assert.equal(isAlcoholSeller({ name: "Tatte Bakery", category: "food" }), false);
   // The API key never leaks into error messages.
   responder = () => new Response("nope", { status: 500 });
   await assert.rejects(nessie.getMerchant("x"), (e: Error) => !e.message.includes("nkey"));
+});
+
+test("nessie v2: the server registers its webhook once and keeps the secret", async () => {
+  const { store } = await import("../src/store.js");
+  const { ensureNessieWebhook } = await import("../src/nessie/webhook.js");
+  const { config } = await import("../src/config.js");
+  const prevUrl = config.publicUrl;
+  (config as { publicUrl: string }).publicUrl = "https://andi.example";
+  try {
+    store.nessieWebhook = undefined;
+    responder = (c) => (c.method === "GET" ? json({ items: [] }) : json({ id: "wh_1", mode: "notify", url: c.body.url, active: true, secret: "whsec_1" }));
+    await ensureNessieWebhook();
+    const post = calls.find((c) => c.method === "POST")!;
+    assert.equal(post.url, "https://v2-prod-api.nessieisreal.com/webhooks");
+    assert.deepEqual(post.body, { mode: "notify", url: "https://andi.example/nessie/webhook", events: ["transaction.created"] });
+    assert.deepEqual(store.nessieWebhook, { id: "wh_1", url: "https://andi.example/nessie/webhook", secret: "whsec_1" });
+
+    // Already registered with a secret we hold: nothing to do.
+    calls = [];
+    responder = () => json({ items: [{ id: "wh_1", mode: "notify", url: "https://andi.example/nessie/webhook", active: true }] });
+    await ensureNessieWebhook();
+    assert.equal(calls.filter((c) => c.method === "POST").length, 0);
+
+    // Registered but the secret was lost (fresh volume): rotate instead of creating a second hook.
+    store.nessieWebhook = undefined;
+    calls = [];
+    responder = (c) =>
+      c.method === "GET"
+        ? json({ items: [{ id: "wh_1", mode: "notify", url: "https://andi.example/nessie/webhook", active: true }] })
+        : json({ id: "wh_1", mode: "notify", url: "https://andi.example/nessie/webhook", active: true, secret: "whsec_2" });
+    await ensureNessieWebhook();
+    assert.equal(calls.at(-1)!.url, "https://v2-prod-api.nessieisreal.com/webhooks/wh_1/secret/rotate");
+    const saved = (): { secret: string } | undefined => store.nessieWebhook; // re-read: TS narrowed it to undefined above
+    assert.equal(saved()?.secret, "whsec_2");
+  } finally {
+    (config as { publicUrl: string }).publicUrl = prevUrl;
+  }
+});
+
+test("nessie v2 webhook: signed alcohol purchases reach Andi once; bad signatures are refused", async () => {
+  const crypto = await import("node:crypto");
+  const { store } = await import("../src/store.js");
+  const { app } = await import("../src/app.js");
+  store.nessieWebhook = { id: "wh_1", url: "https://andi.example/nessie/webhook", secret: "whsec_t" };
+  store.put({
+    id: "per_n",
+    name: "Maya",
+    phone: "+16175550111",
+    soberSince: "2026-09-06",
+    createdAt: new Date().toISOString(),
+    apiToken: "t_n",
+    screening: { drinksPerDay: 1, drinksDaily: false, morningDrinking: false, pastWithdrawal: false, medicalFirst: false },
+    consents: { location: true, purchases: true, shareWithSponsor: "status", sponsorAlerts: true },
+    places: [],
+    checkins: [],
+    slips: [],
+    events: [],
+    purchases: [],
+    chat: [],
+    photon: { spaceId: "spc_n", agentUserId: "usr_a" },
+    weeklyDrinkSpend: 0,
+    nessie: { customerId: "cus_n", accountId: "acct_n" },
+  });
+  responder = (c) =>
+    c.url.includes("/merchants/mer_liq")
+      ? json({ id: "mer_liq", name: "Square Wine & Spirits", category: "liquor store" })
+      : c.url.includes("/merchants/mer_cafe")
+        ? json({ id: "mer_cafe", name: "Tatte Bakery", category: "food" })
+        : json({ id: "m" }, 202);
+
+  const deliver = (eventId: string, tx: Record<string, unknown>, secret = "whsec_t") => {
+    const body = JSON.stringify({ id: eventId, type: "transaction.created", account_id: "acct_n", tx_id: tx.id, data: { transaction: tx } });
+    const t = Math.floor(Date.now() / 1000);
+    const v1 = crypto.createHmac("sha256", secret).update(`${t}.${body}`).digest("hex");
+    return app.request("/nessie/webhook", {
+      method: "POST",
+      headers: { "content-type": "application/json", "nessie-signature": `t=${t},v1=${v1}`, "nessie-event-id": eventId },
+      body,
+    });
+  };
+  const liquor = { id: "txn_a", kind: "purchase", status: "pending", amount_cents: 3400, merchant_id: "mer_liq", payer_id: "acct_n" };
+
+  assert.equal((await deliver("evt_x", liquor, "wrong")).status, 401);
+  assert.equal(store.must("per_n").purchases.length, 0);
+
+  const ok = await deliver("evt_1", liquor);
+  assert.equal(ok.status, 200);
+  assert.equal((await ok.json()).result, "alcohol_purchase");
+  assert.deepEqual(store.must("per_n").purchases.map((p) => [p.merchant, p.amount, p.txId]), [["Square Wine & Spirits", 34, "txn_a"]]);
+  assert.ok(calls.some((c) => c.url.includes("photon") && /saw a stop at Square Wine/.test(c.body?.content?.text ?? "")));
+
+  // The same delivery again, and a different event about the same transaction: still one purchase.
+  assert.equal((await (await deliver("evt_1", liquor)).json()).result, "duplicate");
+  await deliver("evt_2", liquor);
+  assert.equal(store.must("per_n").purchases.length, 1);
+
+  // Not an alcohol seller: ignored.
+  const cafe = await deliver("evt_3", { ...liquor, id: "txn_b", merchant_id: "mer_cafe" });
+  assert.equal((await cafe.json()).result, "not_alcohol");
+  assert.equal(store.must("per_n").purchases.length, 1);
+  store.remove("per_n");
 });
 
 test("elevenlabs: outbound call request shape and success:false handling", async () => {

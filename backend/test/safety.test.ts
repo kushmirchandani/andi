@@ -68,3 +68,13 @@ test("the guard catches softer drinking encouragement but allows water", () => {
   assert.equal(guardReply("maybe just a little wine").ok, false);
   assert.equal(guardReply("grab a drink of water and sit down").ok, true);
 });
+
+test("the safety corpus: every entry routes as expected (the Droid autofix adds to this)", async () => {
+  const { SAFETY_CORPUS } = await import("../src/agent/safety-corpus.js");
+  const wrong = SAFETY_CORPUS.filter((e) => {
+    const kind = routeInbound(e.text).kind;
+    const got = kind === "withdrawal_warning" ? "none" : kind;
+    return got !== e.expect;
+  });
+  assert.deepEqual(wrong, [], `misrouted: ${wrong.map((w) => `"${w.text}" (want ${w.expect})`).join(", ")}`);
+});

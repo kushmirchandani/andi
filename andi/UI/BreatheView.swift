@@ -11,9 +11,9 @@ struct BreatheView: View {
 
         var label: String {
             switch self {
-            case .inhale: "in"
+            case .inhale: "breathe in"
             case .hold: "hold"
-            case .exhale: "out"
+            case .exhale: "breathe out"
             }
         }
     }
@@ -25,63 +25,67 @@ struct BreatheView: View {
 
     var body: some View {
         ZStack {
-            Theme.background.ignoresSafeArea()
+            AndiGlow(anchor: 0.38)
 
-            VStack(spacing: 40) {
+            VStack(spacing: 0) {
+                HStack {
+                    CircleIconButton(symbol: "xmark", label: "close") { dismiss() }
+                    Spacer()
+                }
+                .padding(.horizontal, Theme.gutter)
+                .padding(.top, 8)
+
                 Spacer()
 
                 ZStack {
-                    Circle()
-                        .fill(Theme.accent.opacity(0.16))
-                    Circle()
-                        .strokeBorder(Theme.accent.opacity(0.6), lineWidth: 2)
-                }
-                .frame(width: circleSize, height: circleSize)
-                .scaleEffect(reduceMotion ? 0.8 : (expanded ? 1 : 0.45))
-                .opacity(reduceMotion ? (expanded ? 1 : 0.45) : 1)
-                .accessibilityHidden(true)
+                    ring
+                        .frame(width: circleSize, height: circleSize)
+                        .scaleEffect(reduceMotion ? 0.85 : (expanded ? 1 : 0.55))
+                        .opacity(reduceMotion ? (expanded ? 1 : 0.5) : 1)
+                        .accessibilityHidden(true)
 
-                VStack(spacing: 8) {
                     Text(breath.label)
-                        .accessibilityLabel("breathe \(breath.label)")
-                        .font(.system(.largeTitle, design: .rounded).weight(.light))
+                        .accessibilityLabel(breath.label)
+                        .font(.system(size: 34, weight: .light))
                         .contentTransition(.opacity)
                         .animation(.easeInOut(duration: 0.4), value: breath)
-                    Text("in for 4 · hold for 4 · out for 6")
-                        .font(Theme.caption)
-                        .foregroundStyle(Theme.muted)
+                        .accessibilityAddTraits(.updatesFrequently)
                 }
-                .accessibilityElement(children: .combine)
-                .accessibilityAddTraits(.updatesFrequently)
+
+                Text("in for 4 · hold for 4 · out for 6")
+                    .andiLabel()
+                    .padding(.top, 36)
 
                 Spacer()
 
                 Button("i'm done") { dismiss() }
                     .buttonStyle(.andiSecondary)
                     .padding(.horizontal, Theme.gutter)
-                    .padding(.bottom, 24)
+                    .padding(.bottom, 16)
             }
-        }
-        .overlay(alignment: .topTrailing) {
-            Button {
-                dismiss()
-            } label: {
-                Image(systemName: "xmark")
-                    .font(Theme.headline)
-                    .padding(12)
-                    .background(Circle().fill(Theme.card))
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(Theme.muted)
-            .padding(Theme.gutter)
-            .accessibilityLabel("close")
         }
         .andiHaptic(.light, trigger: breath)
         .task { await breatheLoop() }
         .task {
             guard !didLog else { return }
             didLog = true
+            // Stays on the lock screen and Dynamic Island after they leave this screen.
+            RideItOut.start(day: model.me?.day ?? 0)
+            // Andi texts them ("breathing with you…") so the conversation is already open.
             await model.breathe()
+        }
+    }
+
+    /// A glowing ring, like light through glass.
+    private var ring: some View {
+        ZStack {
+            Circle()
+                .fill(RadialGradient(colors: [Theme.accent.opacity(0.0), Theme.accent.opacity(0.14)],
+                                     center: .center, startRadius: 0, endRadius: circleSize / 2))
+            Circle()
+                .strokeBorder(Theme.text.opacity(0.9), lineWidth: 3)
+                .shadow(color: Theme.accent.opacity(0.9), radius: 24)
+                .shadow(color: Theme.text.opacity(0.5), radius: 6)
         }
     }
 

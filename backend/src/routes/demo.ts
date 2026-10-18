@@ -14,10 +14,13 @@ import { errorBody } from "../http.js";
 import { log } from "../log.js";
 import { isAlcoholSeller, nessie } from "../nessie/client.js";
 import { photonOutbox } from "../photon/client.js";
+import { avatarPng, milestoneCard, recapCard } from "../cards/render.js";
 import type { PhotonEvent } from "../photon/events.js";
 import { chipHub } from "../chip/hub.js";
 import { handlePhotonEvent, sendCheckinPoll } from "../services/conversation.js";
-import { onAlcoholPurchase, onPlaceEnter, evaluate, tick } from "../services/engine.js";
+import { onAlcoholPurchase, onPlaceEnter, evaluate, minutesUntilWindow, refreshPatterns, tick } from "../services/engine.js";
+import { seedDemoHistory } from "../risk/demoHistory.js";
+import { nudgeText, patternsView } from "../risk/patterns.js";
 import { wrapped } from "../services/wrapped.js";
 import { andiNumber, ensurePersonLine, ensureSponsorLine } from "../services/lines.js";
 import { id, localDate, normalizeHandle, nowIso, safeEqual, store, token } from "../store.js";
@@ -107,6 +110,31 @@ demo.post("/seed", async (c) => {
   });
 });
 
+// DEMO DATA: write a few weeks of synthetic history (Friday evenings are hard; a walk helps),
+// re-learn the person's patterns, and say when to pin the clock to see Andi's pre-window text.
+//   {"personId":"per_...","weeks":6}   (defaults to the newest person)
+demo.post("/seed-history", async (c) => {
+  const b = z.object({ personId: z.string().optional(), weeks: z.number().int().min(2).max(8).default(6) }).parse(await body(c));
+  const p = findPerson(b.personId);
+  if (!p) return c.json(notFound("person"), 404);
+  const added = seedDemoHistory(p.id, b.weeks);
+  const learned = await refreshPatterns(p.id, true);
+  const fresh = store.must(p.id);
+  const w = learned?.riskyWindow;
+  const nudgeAt = w
+    ? new Date(clock.now().getTime() + (minutesUntilWindow(clock.now(), fresh.timezone, w) - 45) * 60_000).toISOString()
+    : null;
+  return c.json({
+    demoData: true,
+    added,
+    patterns: patternsView(learned),
+    source: learned?.source ?? null,
+    // POST /demo/clock {"iso": nudgeAt} then /demo/tick to see the text.
+    nudgeAt,
+    nudgePreview: learned?.ready && w ? nudgeText(learned, fresh.sponsor?.name) : null,
+  });
+});
+
 // Pin the clock, e.g. {"iso":"2026-10-16T23:05:00-04:00"} for Friday 11:05pm. {"iso":null} to unpin.
 demo.post("/clock", async (c) => {
   const { iso } = z.object({ iso: z.string().nullable() }).parse(await body(c));
@@ -157,6 +185,22 @@ demo.post("/inbound", async (c) => {
 });
 
 demo.get("/outbox", (c) => c.json(photonOutbox.list()));
+
+// Preview the iMessage image cards: /demo/card/milestone?day=30, /demo/card/recap, /demo/card/avatar
+demo.get("/card/:kind", (c) => {
+  const kind = c.req.param("kind");
+  const day = Math.max(1, Math.min(9999, Number(c.req.query("day") ?? 30) || 30));
+  const png =
+    kind === "milestone"
+      ? milestoneCard(day)
+      : kind === "recap"
+        ? recapCard({ days: 90, urgesRidden: 14, checkins: 41, callsToYourPerson: 6 })
+        : kind === "avatar"
+          ? avatarPng()
+          : null;
+  if (!png) return c.json(errorBody("not_found", "Unknown card. Try milestone, recap or avatar."), 404);
+  return c.body(new Uint8Array(png), 200, { "content-type": "image/png", "cache-control": "no-store" });
+});
 demo.delete("/outbox", (c) => {
   photonOutbox.clear();
   return c.json({ ok: true });
@@ -178,6 +222,7 @@ demo.post("/purchase", async (c) => {
   if (!p) return c.json(notFound(), 404);
 
   let source = "local";
+  let txId: string | undefined;
   if (nessie.enabled() && p.nessie?.accountId) {
     try {
       const merchantId = await nessie.getOrCreateMerchant(b.merchant, "liquor store");
@@ -185,11 +230,12 @@ demo.post("/purchase", async (c) => {
       const merchant = await nessie.getMerchant(purchase.merchant_id ?? merchantId);
       if (!isAlcoholSeller(merchant)) return c.json({ ok: true, alcohol: false });
       source = "nessie";
+      txId = purchase.id; // handled right away below; the webhook for the same transaction is then a no-op
     } catch (err) {
       log.warn("demo", "Nessie purchase failed, using local signal", err);
     }
   }
-  return c.json({ source, risk: await onAlcoholPurchase(p.id, b.merchant, b.amount) });
+  return c.json({ source, txId: txId ?? null, risk: await onAlcoholPurchase(p.id, b.merchant, b.amount, txId) });
 });
 
 demo.post("/checkin-poll", async (c) => {
@@ -220,6 +266,7 @@ demo.get("/state", (c) => {
 });
 
 demo.get("/chip", (c) => {
+  if (!config.features.chip) return c.json({ error: "feature_off", message: "The chip is paused." }, 404);
   const p = findPerson(c.req.query("personId"));
   if (!p) return c.json(notFound(), 404);
   return c.json({ online: chipHub.connected(p.id), last: chipHub.last(p.id) ?? null });

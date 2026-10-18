@@ -13,7 +13,7 @@ import Observation
 /// Demo mode (sample data, no network): `ANDI_DEMO=1` in the environment, the launch argument
 /// `-ANDI_DEMO YES`, Xcode previews, or "try with sample data" in the DEBUG server sheet.
 enum AppConfig {
-    static let defaultBaseURLString = "https://andi-backend.fly.dev"
+    static let defaultBaseURLString = "https://andi-tdc-backend.fly.dev"
     static let savedBaseURLKey = "andi.baseURL"
 
     static var defaultBaseURL: URL {
@@ -64,13 +64,21 @@ enum AppConfig {
 /// Single source of truth the UI observes. Main-actor isolated (project default).
 @Observable
 final class AppModel {
-    enum Phase: Equatable { case onboarding, linking, ready } // linking = account made, waiting for first iMessage
-
-    private static let linkedKey = "andi.linked" // last known imessageLinked, for offline launches
+    /// signIn: phone number, then text andi (or skip). onboarding: new accounts.
+    /// linking: account made; the "text andi" screen, which can be put off until later.
+    enum Phase: Equatable { case signIn, onboarding, linking, ready }
 
     var phase: Phase
     var me: Me? = nil
     var onboardResult: OnboardResponse? = nil
+    /// The sign-in started on the first screen. Kept through onboarding, which finishes it.
+    var signIn: SignInStart? = nil
+    /// The number typed on the first screen (normalized), for onboarding's checks.
+    var signInPhone: String? = nil
+    /// The person texted the sign-in code and the number had no account: onboarding is already verified.
+    var signInVerified = false
+    /// Set after onboarding when the screening says to see a doctor first; the linking screen shows it once.
+    var needsMedicalAck = false
     var isBusy = false
     var lastError: String? = nil
     /// Crisis guidance the server returned for something the person wrote (shown with 988).
@@ -98,16 +106,23 @@ final class AppModel {
         if demo {
             phase = .ready
             me = MockData.me
+            WidgetSync.publish(MockData.me)
+            #if DEBUG
+            // `-ANDI_DEMO_START signIn | textAndi | onboarding`: start the demo at the beginning, for UI work.
+            switch UserDefaults.standard.string(forKey: "ANDI_DEMO_START") {
+            case "signIn": phase = .signIn; me = nil
+            case "textAndi": phase = .signIn; me = nil; signIn = MockData.signInStart; signInPhone = "+16175550101"
+            case "onboarding": phase = .onboarding; me = nil; signInVerified = true
+            default: break
+            }
+            #endif
             return
         }
 
         let savedToken = Keychain.load()
         token = savedToken
-        if savedToken == nil {
-            phase = .onboarding
-        } else {
-            phase = UserDefaults.standard.bool(forKey: Self.linkedKey) ? .ready : .linking
-        }
+        // Signed in means home, linked or not: the "text andi" step can be finished from home or settings.
+        phase = savedToken == nil ? .signIn : .ready
 
         // Geofence enter/exit -> backend. Only the place id and direction are sent.
         location.onEvent = { [weak self] placeId, entered in
@@ -123,18 +138,141 @@ final class AppModel {
         guard !isDemo else { return }
         token = Keychain.load()
         guard token != nil else {
-            phase = .onboarding
+            if phase == .ready { phase = .signIn }
             return
         }
         location.start()
         await refresh()
     }
 
-    func onboard(_ req: OnboardRequest) async -> Bool {
+    // MARK: Sign-in
+
+    /// POST /api/signin, then the app shows "text andi". Returns false (with `lastError`) on failure.
+    func startSignIn(phone: String) async -> Bool {
+        guard let normalized = PhoneNumber.normalize(phone) else {
+            lastError = "that phone number doesn't look right. include the area code."
+            return false
+        }
         if isDemo {
             await demoPause()
-            onboardResult = MockData.onboardResponse(for: req)
-            me = onboardResult?.me
+            signInPhone = normalized
+            signIn = MockData.signInStart
+            return true
+        }
+        beginBusy()
+        lastError = nil
+        defer { endBusy() }
+        do {
+            signIn = try await api.startSignIn(phone: normalized)
+            signInPhone = normalized
+            signInVerified = false
+            return true
+        } catch is CancellationError {
+            return false
+        } catch {
+            lastError = Self.message(for: error)
+            return false
+        }
+    }
+
+    /// Checks every 3s until the sign-in text arrives, then signs in (existing account) or moves
+    /// on to onboarding (new number). Stops when cancelled or the sign-in is dropped.
+    func pollSignIn() async {
+        guard let started = signIn else { return }
+        if isDemo {
+            // Simulate a new person texting andi a few seconds later.
+            do { try await Task.sleep(for: .seconds(4)) } catch { return }
+            guard signIn == started, phase == .signIn else { return }
+            signInVerified = true
+            phase = .onboarding
+            return
+        }
+        let client = APIClient(baseURL: baseURL, token: started.signInToken)
+        while !Task.isCancelled, signIn == started, phase == .signIn {
+            do {
+                let status = try await client.signInStatus()
+                guard signIn == started, phase == .signIn else { return }
+                switch status.state {
+                case .waiting:
+                    break
+                case .verified:
+                    signInVerified = true
+                    phase = .onboarding
+                    return
+                case .signedIn:
+                    await finishSignIn(token: started.signInToken)
+                    return
+                }
+            } catch APIError.signedOut {
+                cancelSignIn()
+                lastError = "that code expired. enter your number again."
+                return
+            } catch is CancellationError {
+                return
+            } catch {
+                // Offline for a moment; keep waiting.
+            }
+            do { try await Task.sleep(for: .seconds(3)) } catch { return }
+        }
+    }
+
+    /// "skip for now": onboard without texting. The same code works later from home or settings.
+    func skipSignIn() {
+        guard signIn != nil else { return }
+        signInVerified = false
+        lastError = nil
+        phase = .onboarding
+    }
+
+    /// Back to the phone number screen (wrong number, or starting over).
+    func cancelSignIn() {
+        signIn = nil
+        signInPhone = nil
+        signInVerified = false
+        phase = .signIn
+    }
+
+    /// `sms:<andi>&body=hi andi <code>` for the sign-in screen.
+    func signInSMSURL() -> URL? {
+        guard let signIn, let handle = signIn.agentHandle else { return nil }
+        return Self.smsURL(to: handle, body: "\(signIn.firstText) \(signIn.linkCode)")
+    }
+
+    private func finishSignIn(token newToken: String) async {
+        guard Keychain.save(newToken) else {
+            lastError = "couldn't save your sign-in on this phone. try again."
+            cancelSignIn()
+            return
+        }
+        token = newToken
+        signIn = nil
+        signInPhone = nil
+        signInVerified = false
+        location.start()
+        phase = .ready
+        await refresh(reportErrors: true)
+    }
+
+    // MARK: Onboarding
+
+    func onboard(_ req: OnboardRequest) async -> Bool {
+        var req = req
+        req.signInToken = signIn?.signInToken
+        if req.signInToken != nil { req.phone = nil }
+        if isDemo {
+            await demoPause()
+            var result = MockData.onboardResponse(for: req)
+            if signInVerified {
+                var linked = result.me
+                linked.imessageLinked = true
+                linked.linkCode = nil
+                result = OnboardResponse(apiToken: result.apiToken, screening: result.screening, agentHandle: result.agentHandle,
+                                         voiceNumber: result.voiceNumber, firstText: result.firstText, linkCode: nil, me: linked)
+            }
+            onboardResult = result
+            me = result.me
+            needsMedicalAck = result.screening.medicalFirst
+            signIn = nil
             phase = .linking
             return true
         }
@@ -150,9 +288,18 @@ final class AppModel {
             token = result.apiToken
             onboardResult = result
             me = result.me
+            needsMedicalAck = result.screening.medicalFirst
+            signIn = nil
+            signInPhone = nil
+            signInVerified = false
             phase = .linking
             syncLocation()
             return true
+        } catch APIError.signedOut {
+            // The sign-in expired while they were onboarding.
+            cancelSignIn()
+            lastError = "that took a while, so andi needs your number again."
+            return false
         } catch is CancellationError {
             return false
         } catch {
@@ -161,11 +308,17 @@ final class AppModel {
         }
     }
 
+    /// The linking screen is done: they texted, or chose to do it later.
+    func finishLinking() {
+        needsMedicalAck = false
+        phase = .ready
+    }
+
     func refresh() async {
         await refresh(reportErrors: true)
     }
 
-    /// GET /api/me. Signs out on 401; moves .linking -> .ready once iMessage is linked.
+    /// GET /api/me. Signs out on 401; leaves the linking screen once iMessage is linked.
     private func refresh(reportErrors: Bool) async {
         if isDemo { return }
         guard token != nil else { return }
@@ -184,12 +337,8 @@ final class AppModel {
 
     private func apply(_ fresh: Me) {
         me = fresh
-        UserDefaults.standard.set(fresh.imessageLinked, forKey: Self.linkedKey)
-        if fresh.imessageLinked {
-            if phase != .ready { phase = .ready }
-        } else if phase == .onboarding {
-            phase = .linking
-        }
+        WidgetSync.publish(fresh)
+        if fresh.imessageLinked, phase == .linking, !needsMedicalAck { phase = .ready }
         syncLocation()
     }
 
@@ -200,7 +349,7 @@ final class AppModel {
             do { try await Task.sleep(for: .seconds(4)) } catch { return }
             me?.imessageLinked = true
             me?.linkCode = nil
-            if phase == .linking { phase = .ready }
+            if phase == .linking, !needsMedicalAck { phase = .ready }
             return
         }
         while !Task.isCancelled {
@@ -256,6 +405,18 @@ final class AppModel {
         }
     }
 
+    /// The chip is paused (see `Features`); its code stays, its Settings section is hidden while off.
+    var chipEnabled: Bool { me?.features.chip ?? false }
+
+    /// Opens Messages to Andi (the Action Button, widget and Live Activity "text andi").
+    /// Before iMessage is linked it's the linking text, so it still finishes setup.
+    func textAndiURL() -> URL? {
+        if me?.imessageLinked == false, let link = smsURL() { return link }
+        guard let handle = me?.agentHandle ?? onboardResult?.agentHandle else { return nil }
+        return Self.smsURL(to: handle, body: "")
+    }
+
+
     /// Returns a short status line to show under the button.
     func callPerson() async -> String? {
         let name = me?.sponsor.flatMap { $0.name.isEmpty ? nil : $0.name } ?? "your person"
@@ -299,6 +460,16 @@ final class AppModel {
             return
         }
         if let updated = await perform(refreshAfter: false, { try await $0.updateConsents(c) }) {
+            apply(updated)
+        }
+    }
+
+    func updateQuietHours(_ q: QuietHours) async {
+        if isDemo {
+            me?.quietHours = q
+            return
+        }
+        if let updated = await perform(refreshAfter: false, { try await $0.updateQuietHours(q) }) {
             apply(updated)
         }
     }
@@ -393,9 +564,11 @@ final class AppModel {
         defer { endBusy() }
         do {
             try await api.deleteAccount()
+            token = nil // nothing left to sign out of on the server
             signOut()
             return true
         } catch APIError.signedOut {
+            token = nil
             signOut() // already gone on the server
             return true
         } catch is CancellationError {
@@ -410,21 +583,31 @@ final class AppModel {
         signOut(reason: nil)
     }
 
-    /// Clears Keychain + state and returns to onboarding. `reason` is shown on the welcome step.
+    /// Clears Keychain + state and returns to the first screen. `reason` is shown there.
+    /// Also retires the token on the server (best effort) unless it was already rejected.
     func signOut(reason: String?) {
         let wasDemo = isDemo
         isDemo = false
         if !wasDemo {
+            if reason == nil, let token {
+                let client = APIClient(baseURL: baseURL, token: token)
+                Task.detached { try? await client.signOut() }
+            }
             Keychain.delete()
             location.sync(places: [])
         }
-        UserDefaults.standard.removeObject(forKey: Self.linkedKey)
         token = nil
         me = nil
         onboardResult = nil
+        signIn = nil
+        signInPhone = nil
+        signInVerified = false
+        needsMedicalAck = false
         chip.cancel()
+        WidgetSync.clear()
+        Task { await RideItOutAttributes.endAll() }
         lastError = reason
-        phase = .onboarding
+        phase = .signIn
     }
 
     // MARK: Developer
@@ -447,6 +630,7 @@ final class AppModel {
         lastError = nil
         onboardResult = nil
         me = MockData.me
+        WidgetSync.publish(MockData.me)
         phase = .ready
     }
 

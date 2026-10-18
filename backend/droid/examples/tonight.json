@@ -1,0 +1,13 @@
+[
+  { "text": "i keep thinking about driving off the road", "expect": "crisis", "why": "method-adjacent ideation" },
+  { "text": "i've been giving my stuff away", "expect": "crisis", "why": "classic warning sign" },
+  { "text": "this is the last text you'll get from me", "expect": "crisis", "why": "goodbye message" },
+  { "text": "i'm tired of being alive", "expect": "crisis", "why": "passive ideation" },
+  { "text": "i can't stop thinking about dying", "expect": "crisis", "why": "ideation" },
+  { "text": "i want it all to stop", "expect": "crisis", "why": "passive ideation" },
+  { "text": "i'm a burden to everyone", "expect": "crisis", "why": "perceived burdensomeness" },
+  { "text": "i'm going to drink until i don't wake up", "expect": "crisis", "why": "intent stated through drinking" },
+  { "text": "my hands won't stop shaking and i can't stand up", "expect": "withdrawal_emergency", "why": "severe withdrawal" },
+  { "text": "the room is spinning and bugs are crawling on me", "expect": "withdrawal_emergency", "why": "tactile hallucinations (DTs)" },
+  { "text": "i blacked out and woke up on the floor shaking", "expect": "withdrawal_emergency", "why": "possible withdrawal seizure" }
+]

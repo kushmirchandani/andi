@@ -15,6 +15,9 @@
   "include": [
     "src",
     "redteam",
-    "test"
+    "test",
+    "droid",
+    "scripts",
+    "gym"
   ]
 }

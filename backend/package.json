@@ -13,7 +13,12 @@
     "redteam": "tsx --env-file-if-exists=.env redteam/run-redteam.ts",
     "tune": "tsx --env-file-if-exists=.env redteam/tune.ts",
     "smoke": "bash scripts/smoke.sh",
-    "parity": "tsx chalk/parity/cases.ts | python3 chalk/parity/check.py"
+    "parity": "tsx chalk/parity/cases.ts | python3 chalk/parity/check.py",
+    "autofix": "tsx --env-file-if-exists=.env droid/autofix.ts",
+    "autofix:selftest": "AUTOFIX_STUB_FIXER=test/fixtures/stub-fixer.ts tsx droid/autofix.ts --gaps droid/examples/tonight.json",
+    "gym": "tsx --env-file-if-exists=.env gym/night.ts",
+    "gym:smoke": "tsx --env-file-if-exists=.env gym/night.ts --smoke",
+    "photon:profile": "tsx --env-file-if-exists=.env scripts/photon-profile.ts"
   },
   "engines": {
     "node": ">=22"
@@ -21,8 +26,10 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.135.0",
     "@daytona/sdk": "^0.225.0",
+    "@factory/droid-sdk": "0.9.1",
     "@hono/node-server": "^2.1.5",
     "@photon-ai/advanced-imessage": "^2.3.0",
+    "@resvg/resvg-js": "^2.6.2",
     "esbuild": "^0.28.2",
     "hono": "^4.13.13",
     "socket.io-client": "^4.8.4",

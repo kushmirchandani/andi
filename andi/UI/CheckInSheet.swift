@@ -15,90 +15,105 @@ struct CheckInSheet: View {
 
     var body: some View {
         NavigationStack {
-            Form {
-                Section {
-                    Toggle(isOn: $checkIn.hungry) { Label("hungry", systemImage: "fork.knife") }
-                    Toggle(isOn: $checkIn.angry) { Label("angry", systemImage: "flame") }
-                    Toggle(isOn: $checkIn.lonely) { Label("lonely", systemImage: "person") }
-                    Toggle(isOn: $checkIn.tired) { Label("tired", systemImage: "moon.zzz") }
-                } header: {
-                    Text("right now, are you…")
-                } footer: {
-                    Text("any one of these can make things harder. noticing it is the point.")
-                }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 28) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("how are you, really?")
+                            .font(Theme.screenTitle)
+                        Text("any one of these can make things harder. noticing it is the point.")
+                            .font(Theme.body)
+                            .foregroundStyle(Theme.muted)
+                    }
 
-                Section {
-                    Picker("mood", selection: $checkIn.mood) {
-                        Text("skip").tag(Int?.none)
-                        ForEach(1...5, id: \.self) { value in
-                            Text("\(value)").tag(Int?.some(value))
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("right now, are you…").andiLabel()
+                        LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
+                            FeelingTile(title: "hungry", symbol: "fork.knife", isOn: $checkIn.hungry)
+                            FeelingTile(title: "angry", symbol: "flame", isOn: $checkIn.angry)
+                            FeelingTile(title: "lonely", symbol: "person", isOn: $checkIn.lonely)
+                            FeelingTile(title: "tired", symbol: "moon.zzz", isOn: $checkIn.tired)
                         }
                     }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                } header: {
-                    Text("how's your mood?")
-                } footer: {
-                    Text("1 is rough, 5 is good.")
-                }
 
-                Section {
-                    TextField("a few words, if you want", text: $note, axis: .vertical)
-                        .lineLimit(2...6)
-                        .focused($noteFocused)
-                        .onChange(of: note) { _, newValue in
-                            if newValue.count > Self.noteLimit { note = String(newValue.prefix(Self.noteLimit)) }
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("your mood").andiLabel()
+                        MoodPicker(mood: $checkIn.mood)
+                    }
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("anything else?").andiLabel()
+                        TextField("a few words, if you want", text: $note, axis: .vertical)
+                            .lineLimit(3...6)
+                            .focused($noteFocused)
+                            .onChange(of: note) { _, newValue in
+                                if newValue.count > Self.noteLimit { note = String(newValue.prefix(Self.noteLimit)) }
+                            }
+                            .andiCard()
+                        if note.count > Self.noteLimit - 50 {
+                            Text("\(Self.noteLimit - note.count) characters left")
+                                .font(Theme.caption)
+                                .foregroundStyle(Theme.muted)
                         }
-                } header: {
-                    Text("anything else?")
-                } footer: {
-                    if note.count > Self.noteLimit - 50 {
-                        Text("\(Self.noteLimit - note.count) characters left")
+                    }
+
+                    if let safetyText {
+                        VStack(alignment: .leading, spacing: 14) {
+                            Text("you don't have to carry this alone")
+                                .font(Theme.headline)
+                            Text(safetyText)
+                                .font(Theme.body)
+                                .fixedSize(horizontal: false, vertical: true)
+                            HStack(spacing: 10) {
+                                if let call = CrisisLine.call988 {
+                                    Link(destination: call) { Label("call 988", systemImage: "phone.fill") }
+                                        .buttonStyle(.andiUrgent)
+                                }
+                                if let text = CrisisLine.text988 {
+                                    Link(destination: text) { Label("text 988", systemImage: "message.fill") }
+                                        .buttonStyle(.andiSecondary)
+                                }
+                            }
+                        }
+                        .andiCard()
+                    }
+
+                    if let errorMessage {
+                        ErrorBanner(message: errorMessage)
                     }
                 }
-
-                if let safetyText {
-                    Section {
-                        Text(safetyText)
-                        if let call = CrisisLine.call988 {
-                            Link(destination: call) { Label("call 988", systemImage: "phone.fill") }
-                        }
-                        if let text = CrisisLine.text988 {
-                            Link(destination: text) { Label("text 988", systemImage: "message.fill") }
-                        }
-                    } header: {
-                        Text("you don't have to carry this alone")
-                    }
-                }
-
-                if let errorMessage {
-                    Section {
-                        Text(errorMessage)
-                            .foregroundStyle(Theme.riskElevated)
-                    }
-                }
+                .padding(.horizontal, Theme.gutter)
+                .padding(.top, 8)
+                .padding(.bottom, Theme.gutter)
             }
-            .formStyle(.grouped)
             .scrollDismissesKeyboard(.interactively)
+            .safeAreaInset(edge: .bottom) {
+                Button {
+                    send()
+                } label: {
+                    if isSending {
+                        ProgressView().tint(Theme.onPrimary)
+                    } else {
+                        Text("send to andi")
+                    }
+                }
+                .buttonStyle(.andiPrimary)
+                .disabled(isSending)
+                .padding(.horizontal, Theme.gutter)
+                .padding(.top, 12)
+                .padding(.bottom, 8)
+                .background(Theme.background.opacity(0.92))
+            }
             .keyboardDoneButton { noteFocused = false }
-            .andiScreenBackground()
-            .navigationTitle("check in")
+            .background(Theme.background.ignoresSafeArea())
             .inlineTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("cancel") { dismiss() }
                 }
-                ToolbarItem(placement: .confirmationAction) {
-                    if isSending {
-                        ProgressView()
-                    } else {
-                        Button("send") { send() }
-                            .disabled(isSending)
-                    }
-                }
             }
         }
         .tint(Theme.accent)
+        .presentationBackground(Theme.background)
     }
 
     private func send() {
@@ -123,6 +138,84 @@ struct CheckInSheet: View {
                 dismiss()
             }
         }
+    }
+}
+
+// MARK: - Pieces
+
+/// A square-ish toggle tile: glass when off, cream when on.
+private struct FeelingTile: View {
+    let title: String
+    let symbol: String
+    @Binding var isOn: Bool
+
+    var body: some View {
+        Button {
+            isOn.toggle()
+        } label: {
+            VStack(alignment: .leading, spacing: 14) {
+                Image(systemName: symbol)
+                    .font(.title3)
+                    .foregroundStyle(isOn ? Theme.onPrimary : Theme.accent)
+                Text(title)
+                    .font(Theme.headline)
+                    .foregroundStyle(isOn ? Theme.onPrimary : Theme.text)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(18)
+            .background(
+                RoundedRectangle(cornerRadius: 18, style: .continuous).fill(isOn ? Theme.primary : Theme.card)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(isOn ? .clear : Theme.hairline)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .animation(.easeOut(duration: 0.15), value: isOn)
+        .accessibilityAddTraits(isOn ? .isSelected : [])
+        .andiHaptic(.light, trigger: isOn)
+    }
+}
+
+/// 1 (rough) to 5 (good) as five circles. Tap the chosen one again to clear it.
+private struct MoodPicker: View {
+    @Binding var mood: Int?
+
+    var body: some View {
+        VStack(spacing: 10) {
+            HStack(spacing: 0) {
+                ForEach(1...5, id: \.self) { value in
+                    let selected = mood == value
+                    Button {
+                        mood = selected ? nil : value
+                    } label: {
+                        Text("\(value)")
+                            .font(.title3.weight(.medium))
+                            .monospacedDigit()
+                            .foregroundStyle(selected ? Theme.onPrimary : Theme.text)
+                            .frame(width: 54, height: 54)
+                            .background(Circle().fill(selected ? Theme.primary : Theme.card))
+                            .overlay(Circle().strokeBorder(selected ? .clear : Theme.hairline))
+                    }
+                    .buttonStyle(.plain)
+                    .frame(maxWidth: .infinity)
+                    .accessibilityLabel("mood \(value) of 5")
+                    .accessibilityAddTraits(selected ? .isSelected : [])
+                }
+            }
+            HStack {
+                Text("rough")
+                Spacer()
+                Text("good")
+            }
+            .font(Theme.caption)
+            .foregroundStyle(Theme.muted)
+            .padding(.horizontal, 12)
+            .accessibilityHidden(true)
+        }
+        .animation(.easeOut(duration: 0.15), value: mood)
+        .andiHaptic(.light, trigger: mood)
     }
 }
 

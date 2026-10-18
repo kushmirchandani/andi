@@ -14,6 +14,7 @@ Checklist:
 - [ ] 8. Daytona
 - [ ] 9. iOS app on your phone
 - [ ] 10. Optional: Find My
+- [ ] 11. Factory Droid (nightly safety autofix)
 
 ## 1. Run it locally
 
@@ -31,16 +32,18 @@ To simulate a text from anyone: `POST /demo/inbound {"from": "+1617…", "text":
 
 ## 2. Deploy to Fly
 
-Fly isn't a HackHarvard sponsor, but it's the simplest always-on host for a process that holds two long-lived connections (Photon's event stream and the chips' WebSockets).
+Fly isn't a HackHarvard sponsor, but it's the simplest always-on host for a process that holds a long-lived connection (Photon's event stream).
+
+The app is `andi-tdc-backend` in `iad`, with its `andi_data` volume and public IPs already set up. To redeploy and set the basics:
 
 ```sh
 cd backend
-fly launch --no-deploy --copy-config      # keep the name andi-backend if it's free; otherwise pick one
-fly volumes create andi_data --size 1 --region bos
-fly secrets set PUBLIC_URL=https://andi-backend.fly.dev DEMO_KEY=$(openssl rand -hex 16) AGENT_TEST_KEY=$(openssl rand -hex 16)
+fly secrets set PUBLIC_URL=https://andi-tdc-backend.fly.dev DEMO_KEY=$(openssl rand -hex 16) AGENT_TEST_KEY=$(openssl rand -hex 16)
 fly deploy
-curl https://andi-backend.fly.dev/health
+curl https://andi-tdc-backend.fly.dev/health
 ```
+
+From scratch on a new Fly account: `fly launch --no-deploy --copy-config`, `fly volumes create andi_data --size 1 --region iad`, then the commands above. If the app has no public IPs (`fly ips list`), run `fly ips allocate-v6` and `fly ips allocate-v4 --shared`.
 
 If you pick a different app name, update `PUBLIC_URL` in `fly.toml` and the secret, and the app's default server in `andi/Core/AppModel.swift` (`defaultBaseURLString`), or set it in the app's server sheet.
 
@@ -66,7 +69,7 @@ Known limits from Photon's docs: shared lines are direct chats only, can't text 
 
 ## 4. Voice (Photon + ElevenLabs)
 
-Your voice number: **+1 740 255 8913** (already in `.env` as `PHOTON_VOICE_NUMBER`).
+Your voice number: **+1 305 810 8482** (already in `.env` as `PHOTON_VOICE_NUMBER`).
 
 In Photon (Voice → Lines → your number → Set up default → SIP → Create profile):
 1. **Outbound calls**: Digest algorithm **SHA-256** → **Enable outbound**. Copy the **password** (shown once), the **username**, and the server (e.g. `sip.photon.codes:5061`, TLS).
@@ -75,11 +78,11 @@ In Photon (Voice → Lines → your number → Set up default → SIP → Create
 
 In ElevenLabs:
 1. Create the agent from [VOICE_AGENT.md](VOICE_AGENT.md): prompt, first message, the 9 dynamic variables, the two tools.
-2. **Phone Numbers → Import number → From SIP Trunk**: label "Andi", number `+17402558913`.
+2. **Phone Numbers → Import number → From SIP Trunk**: label "Andi", number `+13058108482`.
    - Inbound: media encryption **Allowed**, allowed source IPs `0.0.0.0/0`, no credentials.
    - Outbound: address `sip.photon.codes:5061` (no `sip:` prefix), transport **TLS**, media encryption **Allowed**, codecs G.722 / PCMU / PCMA, username + password from Photon.
 3. Assign the agent to the number. Copy the **phone number ID** and the **agent ID**.
-4. **Agents settings** → conversation initiation webhook `https://andi-backend.fly.dev/elevenlabs/init` with secret header `x-andi-secret`. On the agent's **Security** tab, turn on **Fetch initiation client data from a webhook**.
+4. **Agents settings** → conversation initiation webhook `https://andi-tdc-backend.fly.dev/elevenlabs/init` with secret header `x-andi-secret`. On the agent's **Security** tab, turn on **Fetch initiation client data from a webhook**.
 
 Then:
 ```sh
@@ -87,25 +90,43 @@ fly secrets set ELEVENLABS_API_KEY=... ELEVENLABS_AGENT_ID=... ELEVENLABS_PHONE_
 ```
 (Use the same secret value in ElevenLabs.)
 
-Test: call +1 740 255 8913 from your phone (inbound), then tap "call my person" in the app with a sponsor whose number is a second phone (outbound). Without voice configured, "call my person" texts the sponsor a tap-to-call link instead.
+Test: call +1 305 810 8482 from your phone (inbound), then tap "call my person" in the app with a sponsor whose number is a second phone (outbound). Without voice configured, "call my person" texts the sponsor a tap-to-call link instead.
+
+### Voice notes in iMessage (optional)
+
+Andi can also send short iMessage voice notes in its ElevenLabs voice: on milestones, and when someone asks to hear Andi ("send me a voice note"). Text always goes too. Each person gets at most `VOICE_NOTES_PER_DAY` (default 3) a day, to save credits.
+
+1. ElevenLabs → **Voices** → pick Andi's voice → copy its **voice ID**. The API key needs **Text to Speech** access.
+2. `fly secrets set ELEVENLABS_VOICE_ID=...` (uses the same `ELEVENLABS_API_KEY`; optional: `ELEVENLABS_TTS_MODEL`, default `eleven_flash_v2_5`, and `VOICE_NOTES_PER_DAY`).
+
+Without `ELEVENLABS_VOICE_ID` there are no voice notes; nothing else changes.
+
+### Andi's name and photo in Messages
+
+```sh
+npm run photon:profile -- --dry-run   # writes andi-avatar.png so you can look at it first
+npm run photon:profile                # sets the Photon agent profile: "Andi" + the ring avatar
+```
 
 ## 5. Claude
 
 ```sh
 fly secrets set ANTHROPIC_API_KEY=sk-ant-...
 ```
-Model defaults to `claude-sonnet-5-5` (`ANTHROPIC_MODEL`). Then rerun the red team against the real model:
+Model defaults to `claude-sonnet-5-5` (`ANTHROPIC_MODEL`). The same key also turns on the LLM red team (Claude writes the scenarios, plays each person, and judges every conversation; `REDTEAM_MODEL` picks its model, default `claude-sonnet-5-5`). Then rerun the red team against the real model:
 ```sh
-ANDI_URL=https://andi-backend.fly.dev AGENT_TEST_KEY=<yours> npm run redteam -- --local
+ANTHROPIC_API_KEY=sk-ant-... ANDI_URL=https://andi-tdc-backend.fly.dev AGENT_TEST_KEY=<yours> npm run redteam -- --local --n 24
 ```
+`--scripted` runs only the 18 fixed personas with regex scoring (no Claude calls).
 
 ## 6. Chalk
 
 1. Ask the Chalk team at the sponsor table for an environment, and to **enable Evaluations and the async Function queue** for it.
 2. **Settings → Access tokens**: create client credentials.
-3. Deploy the features:
+3. Deploy the features (`backend/chalk/chalk.yaml` is the project file; `.chalkignore` keeps the local parity stub and evals out of the deploy):
    ```sh
-   cd backend/chalk && pip install chalkpy && chalk apply
+   curl -s -L https://api.chalk.ai/install.sh | sh   # Chalk CLI
+   cd backend/chalk && chalk login && chalk apply
    ```
 4. Set the secrets (engine URL and environment are discovered from the token response if you leave them out):
    ```sh
@@ -118,24 +139,30 @@ Proof for judges: `npm run parity` shows the Chalk resolver and the TypeScript s
 
 ## 7. Capital One Nessie
 
-1. Get an API key at nessieisreal.com.
-2. `fly secrets set NESSIE_API_KEY=...`
-3. `POST /demo/seed` now creates a Nessie customer and checking account; `POST /demo/purchase` makes a real purchase at "Square Wine & Spirits" and feeds it to the risk engine (`"source": "nessie"`).
+Andi uses **Nessie v2** (https://v2.nessieisreal.com), the rewrite Capital One is trying out at HackHarvard.
+
+1. Sign in with GitHub at https://v2.nessieisreal.com/account and copy your key (`nsk_...`).
+2. `fly secrets set NESSIE_API_KEY=nsk_... -a andi-tdc-backend`
+3. On boot the server registers a **notify webhook** at `$PUBLIC_URL/nessie/webhook` for `transaction.created` and keeps its signing secret in the store. Check `GET /health` → `sponsors.nessie: "webhook"`. (Locally, with an http PUBLIC_URL, it skips the webhook and shows `"api"`.)
+4. `POST /demo/seed` creates a Nessie customer and checking account. `POST /demo/purchase` makes a real purchase at "Square Wine & Spirits" and feeds it to the risk engine (`"source": "nessie"`).
+5. Purchases made anywhere else on that account (curl, the Nessie dashboard) also reach Andi through the webhook. The same transaction is never counted twice.
+
+Debug deliveries with `curl -H "Authorization: Bearer $NESSIE_API_KEY" https://v2-prod-api.nessieisreal.com/webhooks` and `/webhooks/<id>/deliveries`.
 
 ## 8. Daytona
 
 ```sh
 cd backend
-DAYTONA_API_KEY=... ANDI_URL=https://andi-backend.fly.dev AGENT_TEST_KEY=<yours> npm run redteam   # 18 personas, one sandbox each
+DAYTONA_API_KEY=... ANDI_URL=https://andi-tdc-backend.fly.dev AGENT_TEST_KEY=<yours> npm run redteam   # 24 improvised + 18 scripted conversations, one sandbox each (add ANTHROPIC_API_KEY=... for the LLM attacker + judge)
 DAYTONA_API_KEY=... npm run tune                                                               # 500 simulated weeks, 10 sandboxes
 ```
-Results land in `redteam/results/` (scorecard for the demo slide, JSONL transcripts for Chalk, `tune.json` for the threshold chart).
+Results land in `redteam/results/` (scorecard with per-category pass rates and the judge's reasons, JSONL transcripts for Chalk, `tune.json` for the threshold chart).
 
 ## 9. iOS app on your phone
 
 1. Open `andi.xcodeproj` in Xcode. Target **andi** → **Signing & Capabilities**: pick your team, set a bundle ID (e.g. `com.kush.andi`).
 2. Pick your iPhone as the run destination (the target is now iPhone/iPad only) and build. The code hasn't been compiled yet, so expect a few small fixes on the first build; paste the errors back to Claude.
-3. Server: the app talks to `https://andi-backend.fly.dev` by default. To point it elsewhere: in Debug builds tap "server: …" on the welcome screen, or set `ANDI_BASE_URL` in the scheme's environment.
+3. Server: the app talks to `https://andi-tdc-backend.fly.dev` by default. To point it elsewhere: in Debug builds tap "server: …" on the welcome screen, or set `ANDI_BASE_URL` in the scheme's environment.
 4. No backend at all? On the welcome screen's server sheet, tap **try with sample data** (Debug), or run with `ANDI_DEMO=1`. Every SwiftUI preview also runs on sample data.
 5. For a backend on your Mac's network over plain http, iOS blocks it by default. Easiest: deploy to Fly (https). Otherwise add App Transport Security → Allow Local Networking in the target's Info tab.
 
@@ -152,4 +179,19 @@ fly secrets set FINDMY_IMESSAGE_ADDRESS=host:port FINDMY_IMESSAGE_TOKEN=...
 - **Photon:** does shared-pool assignment via API need anything enabled on our project? Can the Advanced iMessage SDK (Find My) be used with our Beta project, and which credentials? Hackathon credits for voice minutes?
 - **Chalk:** environment + Evaluations enabled; is `/v1/query/online` on the API server fine or should we use the engine URL?
 - **ElevenLabs:** does Photon's SIP INVITE carry the caller's number as `caller_id` in E.164?
-- **Nessie:** do create calls return `objectCreated._id` or a plain string? (The client handles both.)
+- **Nessie (v2 lead dev at the Capital One table):** is the notify envelope exactly the `/events` item shape (`{id, type, account_id, tx_id, data: {transaction}}`)? Any tolerance on the signature timestamp we should enforce?
+
+## 11. Factory Droid (nightly safety autofix)
+
+1. Create an API key at app.factory.ai/settings/api-keys and put it in `backend/.env` as `FACTORY_API_KEY=fk-...`.
+2. Install the CLI the SDK drives: `curl -fsSL https://app.factory.ai/cli | sh` (then `droid --version`).
+3. First run, on tonight's known misses:
+   ```sh
+   cd backend
+   npm run autofix -- --gaps droid/examples/tonight.json
+   ```
+   Read `redteam/results/autofix/<run>/PULL_REQUEST.md` and `fix.patch`. If it looks right: `npm run autofix -- --gaps droid/examples/tonight.json --apply` (or `patch -p1 -i <run>/fix.patch`), then `npm run check`.
+4. Full loop (red-team failures + the Droid's own gap hunt): `npm run autofix`.
+5. Nightly: copy `docs/ci/nightly-safety.yml` to `.github/workflows/` and add the secrets it lists.
+
+No key yet? `npm run autofix:selftest` runs the whole pipeline with a stand-in for the Droid, so you can see the report format.

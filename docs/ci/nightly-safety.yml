@@ -1,0 +1,53 @@
+# Nightly safety loop: red team (Daytona) -> Droid autofix (Factory) -> pull request for a human.
+# Move this file to .github/workflows/nightly-safety.yml to turn it on.
+# Secrets: FACTORY_API_KEY, DAYTONA_API_KEY, AGENT_TEST_KEY, ANDI_URL (your deployed backend).
+name: nightly-safety
+on:
+  schedule:
+    - cron: "17 8 * * *" # 4:17am New York
+  workflow_dispatch:
+permissions:
+  contents: write
+  pull-requests: write
+jobs:
+  safety:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: curl -fsSL https://app.factory.ai/cli | sh && echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Red team (Claude-improvised hard nights + 18 scripted, judged, in parallel Daytona sandboxes)
+        run: npm run redteam
+        env:
+          DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}   # LLM attacker + judge; without it, scripted baseline only
+          ANDI_URL: ${{ secrets.ANDI_URL }}
+          AGENT_TEST_KEY: ${{ secrets.AGENT_TEST_KEY }}
+      - name: Droid autofix (hunt gaps, patch, verify)
+        id: autofix
+        run: npm run autofix -- --apply
+        env:
+          FACTORY_API_KEY: ${{ secrets.FACTORY_API_KEY }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: safety-report
+          path: backend/redteam/results/
+      - name: Open a pull request for review
+        if: hashFiles('backend/redteam/results/autofix/latest/fix.patch') != ''
+        uses: peter-evans/create-pull-request@v7
+        with:
+          branch: safety-autofix
+          title: "Safety autofix: close gaps found tonight"
+          body-path: backend/redteam/results/autofix/latest/PULL_REQUEST.md
+          add-paths: |
+            backend/src/agent/safety.ts
+            backend/src/agent/safety-corpus.ts

@@ -66,8 +66,21 @@ nonisolated struct APIClient: Sendable {
 
     // MARK: Endpoints
 
+    /// POST /api/signin. No auth; the response is the same whether or not the number has an account.
+    func startSignIn(phone: String) async throws -> SignInStart {
+        try await send("POST", "api/signin", body: SignInRequest(phone: phone), auth: false)
+    }
+
+    /// GET /api/signin with the sign-in token as `token`. 401 means it expired.
+    func signInStatus() async throws -> SignInStatus { try await send("GET", "api/signin") }
+
     func onboard(_ req: OnboardRequest) async throws -> OnboardResponse {
         try await send("POST", "api/onboard", body: req, auth: false)
+    }
+
+    /// POST /api/signout -> 204. Retires this token on the server.
+    func signOut() async throws {
+        _ = try await raw("POST", "api/signout", body: nil, auth: true)
     }
 
     func me() async throws -> Me { try await send("GET", "api/me") }
@@ -78,6 +91,8 @@ nonisolated struct APIClient: Sendable {
     }
 
     func updateConsents(_ c: Consents) async throws -> Me { try await send("PUT", "api/consents", body: c) }
+
+    func updateQuietHours(_ q: QuietHours) async throws -> Me { try await send("PUT", "api/quiet-hours", body: q) }
 
     func updateSponsor(name: String, phone: String) async throws -> Me {
         try await send("PUT", "api/sponsor", body: SponsorInput(name: name, phone: phone))

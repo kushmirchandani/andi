@@ -5,14 +5,34 @@ import { config, enabled } from "../config.js";
 import { assignLine, releaseLine } from "../photon/lines.js";
 import { normalizeHandle, store } from "../store.js";
 
-// Is any other account still using this handle (as a person or as a sponsor)?
-function handleInUse(handle: string, except: { personId: string; role: "person" | "sponsor" }) {
+// Is anything else still using this handle (a person, a sponsor, or a sign-in in progress)?
+function handleInUse(handle: string, except: { id: string; role: "person" | "sponsor" | "signIn" }) {
   const h = normalizeHandle(handle);
-  return store.all().some(
-    (p) =>
-      (normalizeHandle(p.phone) === h && !(except.role === "person" && p.id === except.personId)) ||
-      (p.sponsor && normalizeHandle(p.sponsor.phone) === h && !(except.role === "sponsor" && p.id === except.personId)),
+  return (
+    store.all().some(
+      (p) =>
+        (normalizeHandle(p.phone) === h && !(except.role === "person" && p.id === except.id)) ||
+        (p.sponsor && normalizeHandle(p.sponsor.phone) === h && !(except.role === "sponsor" && p.id === except.id)),
+    ) || store.signIns().some((s) => normalizeHandle(s.phone) === h && !(except.role === "signIn" && s.id === except.id))
   );
+}
+
+// A sign-in needs a line before the person can text it. Every number gets the same call, whether
+// or not it has an account, so the response never hints either way.
+export async function ensureSignInLine(signInId: string) {
+  const s = store.signIns().find((x) => x.id === signInId);
+  if (!s || !enabled.photon()) return;
+  const line = await assignLine(s.phone);
+  if (!store.signIns().some((x) => x.id === signInId)) return;
+  store.updateSignIn(signInId, (x) => {
+    if (line.assignmentId) x.photon.assignmentId = line.assignmentId;
+    if (line.number) x.photon.andiNumber = line.number;
+  });
+}
+
+export async function releaseSignInLine(s: { id: string; phone: string; photon: { assignmentId?: string } }) {
+  if (handleInUse(s.phone, { id: s.id, role: "signIn" })) return;
+  await releaseLine(s.photon.assignmentId);
 }
 
 export async function ensurePersonLine(personId: string) {
@@ -56,12 +76,12 @@ export async function healLines(personId: string) {
 }
 
 export async function releaseSponsorLine(personId: string, sponsor: { phone: string; photon: { assignmentId?: string } }) {
-  if (handleInUse(sponsor.phone, { personId, role: "sponsor" })) return;
+  if (handleInUse(sponsor.phone, { id: personId, role: "sponsor" })) return;
   await releaseLine(sponsor.photon.assignmentId);
 }
 
 export async function releasePersonLines(person: { id: string; phone: string; photon: { assignmentId?: string }; sponsor?: { phone: string; photon: { assignmentId?: string } } }) {
-  if (!handleInUse(person.phone, { personId: person.id, role: "person" })) await releaseLine(person.photon.assignmentId);
+  if (!handleInUse(person.phone, { id: person.id, role: "person" })) await releaseLine(person.photon.assignmentId);
   if (person.sponsor) await releaseSponsorLine(person.id, person.sponsor);
 }
 

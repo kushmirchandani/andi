@@ -34,6 +34,16 @@ nonisolated struct Consents: Codable, Sendable, Equatable {
     static let defaults = Consents(location: true, purchases: true, shareWithSponsor: .status, sponsorAlerts: true)
 }
 
+/// Local hours (0-23) when andi holds back check-ins and milestone texts. `end` is exclusive and
+/// the window can wrap midnight (22 -> 7). Replies to the person are never held back.
+nonisolated struct QuietHours: Codable, Sendable, Equatable {
+    var enabled: Bool
+    var start: Int
+    var end: Int
+
+    static let defaults = QuietHours(enabled: true, start: 2, end: 9)
+}
+
 nonisolated struct Risk: Codable, Sendable, Equatable {
     let score: Double
     let level: RiskLevel
@@ -98,6 +108,14 @@ nonisolated struct Sponsor: Codable, Sendable, Equatable {
     }
 }
 
+/// Paused features, from the server (FEATURE_CHIP). The chip code stays in the app; its Settings
+/// section is hidden while it's off. Missing from an older server means off.
+nonisolated struct Features: Codable, Sendable, Equatable {
+    var chip: Bool
+
+    static let paused = Features(chip: false)
+}
+
 /// GET /api/me. Fields are `var` so demo mode can update a local copy.
 nonisolated struct Me: Codable, Sendable, Equatable {
     var id: String
@@ -119,11 +137,14 @@ nonisolated struct Me: Codable, Sendable, Equatable {
     var linkCode: String?
     /// The person's saved "why" (for prefilling Settings).
     var why: String?
+    var quietHours: QuietHours
+    var features: Features
 
     init(id: String, name: String, day: Int, soberSince: String, moneySaved: Double, risk: Risk?,
          consents: Consents, places: [Place], sponsor: Sponsor?, imessageLinked: Bool,
          agentHandle: String?, voiceNumber: String?, chipPaired: Bool, chipOnline: Bool,
-         medicalFirst: Bool, portalUrl: String?, linkCode: String?, why: String? = nil) {
+         medicalFirst: Bool, portalUrl: String?, linkCode: String?, why: String? = nil,
+         quietHours: QuietHours = .defaults, features: Features = .paused) {
         self.id = id
         self.name = name
         self.day = day
@@ -142,11 +163,13 @@ nonisolated struct Me: Codable, Sendable, Equatable {
         self.portalUrl = portalUrl
         self.linkCode = linkCode
         self.why = why
+        self.quietHours = quietHours
+        self.features = features
     }
 
     nonisolated enum CodingKeys: String, CodingKey {
         case id, name, day, soberSince, moneySaved, risk, consents, places, sponsor, imessageLinked
-        case agentHandle, voiceNumber, chipPaired, chipOnline, medicalFirst, portalUrl, linkCode, why
+        case agentHandle, voiceNumber, chipPaired, chipOnline, medicalFirst, portalUrl, linkCode, why, quietHours, features
     }
 
     // Tolerant: `id` is the only hard requirement; everything else falls back to a sensible default.
@@ -170,6 +193,8 @@ nonisolated struct Me: Codable, Sendable, Equatable {
         portalUrl = (try? c.decodeIfPresent(String.self, forKey: .portalUrl)) ?? nil
         linkCode = (try? c.decodeIfPresent(String.self, forKey: .linkCode)) ?? nil
         why = (try? c.decodeIfPresent(String.self, forKey: .why)) ?? nil
+        quietHours = (try? c.decodeIfPresent(QuietHours.self, forKey: .quietHours)) ?? .defaults
+        features = (try? c.decodeIfPresent(Features.self, forKey: .features)) ?? .paused
     }
 }
 
@@ -185,9 +210,58 @@ nonisolated struct SponsorInput: Codable, Sendable {
     var phone: String
 }
 
+// MARK: - Sign-in (the app's first screen)
+
+/// POST /api/signin. The same shape for every number: whether it has an account only shows
+/// after the person texts `firstText linkCode` from that number.
+nonisolated struct SignInStart: Codable, Sendable, Equatable {
+    /// Becomes this install's account token once the text arrives (or onboarding finishes).
+    let signInToken: String
+    let linkCode: String
+    let firstText: String
+    let agentHandle: String?
+
+    init(signInToken: String, linkCode: String, firstText: String, agentHandle: String?) {
+        self.signInToken = signInToken
+        self.linkCode = linkCode
+        self.firstText = firstText
+        self.agentHandle = agentHandle
+    }
+
+    nonisolated enum CodingKeys: String, CodingKey { case signInToken, linkCode, firstText, agentHandle }
+
+    init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        signInToken = try c.decode(String.self, forKey: .signInToken)
+        linkCode = try c.decode(String.self, forKey: .linkCode)
+        firstText = (try? c.decodeIfPresent(String.self, forKey: .firstText)) ?? "hi andi"
+        agentHandle = (try? c.decodeIfPresent(String.self, forKey: .agentHandle)) ?? nil
+    }
+}
+
+/// GET /api/signin while waiting for the text.
+nonisolated enum SignInState: String, Codable, Sendable {
+    /// No text yet.
+    case waiting
+    /// Texted from that number, no account: finish with onboarding.
+    case verified
+    /// Texted, and the number has an account: the sign-in token is now the account's.
+    case signedIn = "signed_in"
+}
+
+nonisolated struct SignInStatus: Codable, Sendable {
+    let state: SignInState
+}
+
+nonisolated struct SignInRequest: Codable, Sendable {
+    var phone: String
+}
+
 nonisolated struct OnboardRequest: Codable, Sendable {
     var name: String
-    var phone: String
+    /// From `SignInStart`. When set, the server uses the sign-in's number and ignores `phone`.
+    var signInToken: String?
+    var phone: String?
     /// "YYYY-MM-DD"
     var soberSince: String
     var weeklyDrinkSpend: Double
@@ -371,5 +445,13 @@ nonisolated enum PhoneNumber {
         }
         guard (8...15).contains(digits.count), !digits.hasPrefix("0") else { return nil }
         return "+" + digits
+    }
+
+    /// "+15551234567" -> "+1 (555) 123-4567" for display. Other numbers and emails are returned as is.
+    static func display(_ handle: String) -> String {
+        let digits = handle.filter(\.isNumber)
+        guard handle.hasPrefix("+1"), digits.count == 11 else { return handle }
+        let d = Array(digits.dropFirst())
+        return "+1 (\(String(d[0..<3]))) \(String(d[3..<6]))-\(String(d[6..<10]))"
     }
 }

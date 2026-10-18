@@ -1,6 +1,6 @@
 # Andi backend
 
-The brain behind Andi: the iMessage agent (Photon V2), the risk engine (Chalk, with a local fallback), purchase signals (Capital One Nessie), the sponsor's status message and portal, the chip's WebSocket, the voice agent's webhooks (ElevenLabs on Photon voice), and the Daytona red team and threshold tuning.
+The brain behind Andi: the iMessage agent (Photon V2), the risk engine (Chalk, with a local fallback), purchase signals (Capital One Nessie), the sponsor's status message and portal, the (paused) chip's WebSocket, the voice agent's webhooks (ElevenLabs on Photon voice), and the Daytona red team and threshold tuning.
 
 Every integration is optional. With no keys the server runs in **dry-run mode**: iMessages go to an in-memory outbox instead of Photon, risk is scored locally, and Andi uses conservative rule-based replies. `GET /health` shows what's live.
 
@@ -12,6 +12,8 @@ npm run smoke        # the Friday-night story end to end against a running serve
 npm run parity       # Chalk resolver vs TypeScript scorer on 5,000 random inputs
 npm run redteam      # 18 hard-night personas (Daytona, or -- --local)
 npm run tune         # 500 simulated weeks to tune alert thresholds (Daytona, or -- --local)
+npm run gym          # Andi Gym: practice, coach the playbook, A/B exam, promote only if more helpful AND no safety regression
+npm run gym:smoke    # a tiny local Andi Gym night (see docs/ARCHITECTURE.md section 15; scoreboard at GET /gym)
 ```
 
 Docs live in [`../docs`](../docs):
@@ -39,6 +41,7 @@ src/
   http.ts log.ts config.ts clock.ts types.ts
 chalk/                features.py (Chalk resolver), evals/ (safety scorers + Chalk Evaluation runner), parity/
 redteam/              personas, scorers, Daytona runner, tuning
+gym/                  Andi Gym: nightly self-coaching of src/agent/playbook.ts (history.json feeds GET /gym)
 test/                 node:test suites; vendors are mocked at fetch
 scripts/smoke.sh
 ```

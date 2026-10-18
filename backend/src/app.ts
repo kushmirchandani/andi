@@ -15,6 +15,8 @@ import { agentTest } from "./routes/agentTest.js";
 import { api } from "./routes/api.js";
 import { demo } from "./routes/demo.js";
 import { elevenlabsRoutes } from "./routes/elevenlabs.js";
+import { gym } from "./routes/gym.js";
+import { nessieRoutes } from "./routes/nessie.js";
 import { sponsorRoutes } from "./routes/sponsor.js";
 import { store } from "./store.js";
 
@@ -56,10 +58,11 @@ app.get("/health", (c) =>
     version: config.version,
     uptimeS: Math.round((Date.now() - startedAt.getTime()) / 1000),
     people: store.all().length,
-    chipsOnline: chipHub.count(),
+    features: config.features,
+    chipsOnline: config.features.chip ? chipHub.count() : 0,
     sponsors: {
       photon: enabled.photon() ? photonStream.state : "dry-run",
-      nessie: enabled.nessie(),
+      nessie: enabled.nessie() ? (store.nessieWebhook ? "webhook" : "api") : false,
       chalk: enabled.chalk() ? (Date.now() < chalkStatus.openUntil ? "degraded (local fallback)" : "live") : "local",
       anthropic: enabled.anthropic(),
       elevenlabs: enabled.elevenlabs(),
@@ -71,6 +74,8 @@ app.get("/health", (c) =>
 
 app.route("/api", api);
 if (enabled.demo()) app.route("/demo", demo);
+if (enabled.demo()) app.route("/gym", gym);
 app.route("/", sponsorRoutes);
 if (enabled.agentTest()) app.route("/", agentTest);
 app.route("/elevenlabs", elevenlabsRoutes);
+app.route("/nessie", nessieRoutes);

@@ -10,6 +10,9 @@ process.env.DEMO_KEY = "test-demo";
 process.env.AGENT_TEST_KEY = "test-agent";
 process.env.ELEVENLABS_WEBHOOK_SECRET = "test-11";
 process.env.APP_TIMEZONE = "America/New_York";
+// The chip is paused in production, but the suite keeps testing it so it can come back by
+// flipping a switch. test/features.test.ts covers the paused behavior.
+process.env.FEATURE_CHIP = "1";
 for (const k of [
   "PHOTON_API_KEY",
   "PHOTON_PROJECT_ID",

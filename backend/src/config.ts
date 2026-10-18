@@ -15,9 +15,15 @@ export const config = {
   // Demo and red-team routes are disabled in production unless a real key is set.
   demoKey: env("DEMO_KEY", isProd ? "" : "dev-demo-key"),
   testKey: env("AGENT_TEST_KEY", isProd ? "" : "dev-test-key"),
-  // Quiet hours (local time) for proactive nudges and milestone texts. Replies are never delayed.
+  // Default quiet hours (local time) for proactive nudges and milestone texts; people can set their own in the app.
   quietStartHour: Number(env("QUIET_START_HOUR", "2")),
   quietEndHour: Number(env("QUIET_END_HOUR", "9")),
+
+  // Paused: the hardware chip (WebSocket, pairing, tap/long-press). Off unless FEATURE_CHIP=1; the
+  // code stays so it can come back. Everything the chip did also works from the app and iMessage.
+  features: {
+    chip: env("FEATURE_CHIP") === "1",
+  },
 
   anthropic: {
     apiKey: env("ANTHROPIC_API_KEY"),
@@ -37,7 +43,7 @@ export const config = {
 
   nessie: {
     apiKey: env("NESSIE_API_KEY"),
-    baseUrl: env("NESSIE_BASE_URL", "https://api.nessieisreal.com"),
+    baseUrl: env("NESSIE_BASE_URL", "https://v2-prod-api.nessieisreal.com"),
   },
 
   chalk: {
@@ -55,6 +61,10 @@ export const config = {
     agentPhoneNumberId: env("ELEVENLABS_PHONE_NUMBER_ID"),
     // Shared secret ElevenLabs sends to our webhooks (personalization / tools). Optional.
     webhookSecret: env("ELEVENLABS_WEBHOOK_SECRET"),
+    // Text-to-speech for iMessage voice notes. Off unless a voice is chosen.
+    voiceId: env("ELEVENLABS_VOICE_ID"),
+    ttsModel: env("ELEVENLABS_TTS_MODEL", "eleven_flash_v2_5"),
+    voiceNotesPerDay: Number(env("VOICE_NOTES_PER_DAY", "3")),
   },
 
   // Advanced iMessage SDK line credentials, used only for Find My locations.
@@ -75,6 +85,8 @@ export const enabled = {
   chalk: () => Boolean(config.chalk.clientId && config.chalk.clientSecret),
   elevenlabs: () =>
     Boolean(config.elevenlabs.apiKey && config.elevenlabs.agentId && config.elevenlabs.agentPhoneNumberId),
+  // Voice notes only need the API key and a voice, not the phone agent.
+  tts: () => Boolean(config.elevenlabs.apiKey && config.elevenlabs.voiceId),
   findmy: () => Boolean(config.findmy.address && config.findmy.token),
   demo: () => Boolean(config.demoKey),
   agentTest: () => Boolean(config.testKey),

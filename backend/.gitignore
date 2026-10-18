@@ -4,3 +4,7 @@ data/
 redteam/results/*.jsonl
 __pycache__/
 *.pyc
+redteam/results/autofix/
+.venv/
+andi-avatar.png
+redteam/results/gym/
